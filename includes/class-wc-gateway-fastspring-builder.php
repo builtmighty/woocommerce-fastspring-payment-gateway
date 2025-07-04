@@ -13,6 +13,16 @@ class WC_Gateway_FastSpring_Builder
 {
 
   /**
+   * Constructer
+   */
+  public function __construct()
+  {
+    // add_filter('wc_fastspring_discount_item_amount', array( $this, 'get_discount_item_amount' ), 10, 3);
+
+    // add_filter( 'wc_fastspring_add_discount_details_to_item', array( $this, 'add_discount_details_to_item' ), 10, 2 );
+  }
+
+  /**
    * Options
    *
    * @param string $option option name
@@ -25,10 +35,14 @@ class WC_Gateway_FastSpring_Builder
 
     /**
      * Calculates discounted item price based on overall discount share
+     * 
+     * @param float $price
+     * @param int $quantity
+     * @param WC_Product $product
      *
-     * @return float
+     * @return float - Discounted price
      */
-    public static function get_discount_item_amount($price, $quantity)
+    public static function get_discount_item_amount($price, $quantity, $product)
     {
         $total = WC()->cart->subtotal;
         $discount = WC()->cart->discount_cart;
@@ -37,6 +51,129 @@ class WC_Gateway_FastSpring_Builder
         self::log('Calculating pricing for amount of '.$price.' and qty of '.$quantity.' with cart total of '.$total.' and discount of '.$discount.': '.$cost);
         return $cost;
     }
+
+    /**
+     * Calculates the discount amount for an item based on the total cost and the item cost.
+     *
+     * @param float $discount_amount - The total discount amount
+     * @param float $item_cost - The cost of the item
+     * @param float $total_cost - The total cost of the cart/order
+     *
+     * @return float - The discount amount for the item
+     */
+    public static function calculate_discount( $discount_amount, $item_cost, $total_cost ) {
+      $discounted_amount = 0;
+
+      if ( $total_cost <= 0 )
+        return $discounted_amount;
+
+      // Calculate the item's proportion of the total cost
+      $item_proportion = round( $item_cost / $total_cost, 4 );
+
+      // Calculate the discount for this item
+      $discounted_amount = $discount_amount * $item_proportion;
+
+      return $discounted_amount;
+    }
+
+    /**
+     * Adds discount details to the item if one is applied.
+     *
+     * @param array $item - FastSpring Item to add discount details to
+     * @param float $total_cost - Total cost of the cart/order
+     *
+     * @return array - FastSpring Item with discount details
+     * 
+     * @hooked filter wc_fastspring_add_discount_details_to_item
+     */
+    public static function add_discount_details_to_item( $item, $total_cost ) {
+      $currency = get_woocommerce_currency();
+
+      // Skip if the item has no pricing or the pricing is not numeric
+      if (
+        ! isset( $item['pricing']['price'][$currency] ) ||
+        ! is_numeric( $item['pricing']['price'][$currency] )
+      )
+        return $item;
+
+      $item_cost  = $item['pricing']['price'][$currency];
+
+      // Get the currency EG USD, EUR, etc
+      $currency               = get_woocommerce_currency();
+      $quantity_discounts_key = 1;
+      $total_discount_amount  = 0;
+
+      // Default discount details
+      $discount_details       = array(
+          'discountType'      => 'amount', // Default type
+          'quantityDiscounts' => array(
+            $quantity_discounts_key => array(
+             $currency => 0, // Default value
+            ),
+          ),
+          'discountReason'    => array(
+              'en' => '',
+              'de' => ''
+          ), // Default reason
+      );
+
+      // Get the applied coupons
+      $coupons = WC()->cart->get_coupons();
+      if ( ! empty( $coupons ) ) :
+        $coupon_code = array_keys($coupons)[0]; // Assuming only one coupon is applied
+        $coupon      = new WC_Coupon($coupon_code);
+
+        $discount_details['discountType'] = $coupon->get_discount_type();
+        $coupon_value                     = $coupon->get_amount();
+        $discount_details['quantityDiscounts'][$quantity_discounts_key][$currency] = $coupon_value;
+        $discount_details['discountReason'] = array(
+            'en' => $coupon->get_description(),
+            'de' => $coupon->get_description()
+        ); // Assuming same description for all languages
+
+        $total_discount_amount += $coupon_value;
+      endif;
+
+      $discount_amount = $discount_details['quantityDiscounts'][$quantity_discounts_key][$currency];
+
+      /**
+       * Filter the discount amount.
+       *
+       * @param float $discount_amount The Discount amount.
+       * 
+       * @return float $discount_amount The Discount amount.
+       */
+      $discount_amount = apply_filters( 'wc_fastspring_discount_amount', $discount_amount );
+
+      if ( $discount_amount <= 0 )
+        return $item;
+
+      $calculated_discount = self::calculate_discount( $discount_amount, $item_cost, $total_cost );
+
+      $discount_details['quantityDiscounts'][$quantity_discounts_key][$currency] = $calculated_discount;
+
+      // Merge the discount details with the item pricing.
+      $item['pricing'] = array_merge( $item['pricing'], $discount_details );
+
+      return $item;
+    }
+
+    /**
+     * Add discount details to items
+     * @param array $items - The FastSpring Items to Add the Discount Details to
+     * @return array $items - The FastSpring Items to Add with the Added Discount Details
+     */
+    public static function add_discount_details_to_items( $items ) {
+      $total_cost = WC()->cart->get_subtotal();
+      foreach ( $items as $key => $item ) :
+        $items[$key] = self::add_discount_details_to_item( $item, $total_cost );
+      endforeach;
+
+      $items = apply_filters( 'wc_fastspring_add_discount_details_to_items', $items );
+
+      return $items;
+    }
+
 
     /**
      * Builds cart payload
@@ -58,7 +195,7 @@ class WC_Gateway_FastSpring_Builder
             $item = array(
              
 
-     'product' => $product->get_slug(),
+              'product' => $product->get_slug(),
               'pricing' => [
                 'quantityBehavior' => 'lock',
                 'quantityDefault' =>  $values['quantity']
@@ -83,7 +220,7 @@ class WC_Gateway_FastSpring_Builder
               'sku' => $product->get_sku(),
 
             );
-      
+
             // Subscriptions?
             if ($has_subscription_support) {
 
@@ -148,7 +285,7 @@ class WC_Gateway_FastSpring_Builder
 
             // Set our determined price
             $item['pricing']['price'] = [
-                get_woocommerce_currency() => self::get_discount_item_amount($price, $values['quantity']),
+                get_woocommerce_currency() => apply_filters( 'wc_fastspring_discount_item_amount', $price, $values['quantity'], $product ),
             ];
 
             $items[] = $item;
@@ -161,7 +298,7 @@ class WC_Gateway_FastSpring_Builder
                     'pricing' => [
                       'quantityBehavior' => 'lock',
                       'price' => [
-                        get_woocommerce_currency() => self::get_discount_item_amount($fee, $values['quantity'])
+                        get_woocommerce_currency() => apply_filters( 'wc_fastspring_discount_item_amount', $fee, $values['quantity'], $product )
                       ],
                     ],
                     'display' => [
@@ -175,7 +312,19 @@ class WC_Gateway_FastSpring_Builder
                     'removable' => false
                   );
             }
+
+          // Get Total Items with an actual cost.
+          $discountable_items = array();
+          foreach ( $items as $item ) :
+            if ($item['pricing']['price'][get_woocommerce_currency()] > 0)
+              $discountable_items[] = $item;
+          endforeach;
+
+          $discountable_items_count = count( $discountable_items );
         }
+
+        // Add discount details to the items
+        $items = self::add_discount_details_to_items( $items );
 
         return $items;
     }
@@ -266,6 +415,7 @@ class WC_Gateway_FastSpring_Builder
     {
         $aes_key = self::aes_key_generate();
         $payload = self::get_json_payload();
+
         $encypted = self::encrypt_payload($aes_key, json_encode($payload));
         $key = self::encrypt_key($aes_key);
 

@@ -1,15 +1,15 @@
 ﻿=== FastSpring for WooCommerce ===
-Contributors: Enradia
+Contributors: Enradia, Built Mighty
 Tags: WooCommerce, Payment Gateway
-Version: 1.2.3
+Version: 2.0.0
 Requires PHP: 5.0.0
-Requires at least: 3.0
-Tested up to: 4.9.6
-Contributor: cyberwombat
+Requires at least: 9.3.1
+Tested up to: 6.6.2
+Contributor: cyberwombat, Built Mighty
 Stable tag: trunk
 License: MIT
 License URI: https://opensource.org/licenses/MIT
-Contributors: cyberwombat
+Contributors: cyberwombat, Built Mighty
 Donate link: https://www.paypal.com/donate/?token=SiMqCFR8nI8ciqqKR8EpxBhGrBTAt6ye5kevdwvLF5MGjGTAO_oN7o-vDlWvRiBrZopSw0&country.x=US&locale.x=US
 
 FastSpring For Woocommerce integrates your FastSpring account with your wordpress site
@@ -94,3 +94,6 @@ N/A
 
 = 1.2.5 =
 * Fix typo causing subscription activate issues
+
+= 1.3.0 =
+* Address functionality which passes discounts from WooCommerce to FastSpring
