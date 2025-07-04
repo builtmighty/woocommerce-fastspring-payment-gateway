@@ -64,11 +64,15 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
             $this->description = trim($this->description);
         }
 
-        // Hooks.
+        // Action Hooks
         add_action('wc_ajax_wc_fastspring_order_complete', array($this, 'ajax_order_complete'));
         add_action('wp_enqueue_scripts', array($this, 'payment_scripts'));
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
         add_action('woocommerce_api_wc_gateway_fastspring_commerce', array($this, 'return_handler'));
+        add_action('woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'update_options') );
+
+
+
     }
 
     /**
@@ -198,6 +202,9 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
     public function init_form_fields()
     {
         $this->form_fields = include 'settings-fastspring.php';
+
+        // Add validation for the temp_order_deletion_time field
+        $this->form_fields['temp_order_deletion_time']['validate_callback'] = array( $this, 'validate_temp_order_deletion_time_field' );
     }
 
     /**
@@ -225,15 +232,21 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
 
         if (self::get_setting('enabled')) {
             wp_enqueue_script('fastspring', WC_FASTSPRING_SCRIPT, '', false, true);
-
-            wp_enqueue_script('woocommerce_fastspring', plugins_url('assets/js/fastspring-checkout' . $suffix . '.js', WC_FASTSPRING_MAIN_FILE), array('jquery', 'fastspring'), WC_FASTSPRING_VERSION, true);
+            wp_enqueue_script('woocommerce_fastspring', plugins_url('assets/js/fastspring-checkout' . $suffix . '.js', WC_FASTSPRING_MAIN_FILE), array('jquery', 'fastspring'), filemtime( plugin_dir_path( WC_FASTSPRING_MAIN_FILE ) . 'assets/js/fastspring-checkout' . $suffix . '.js' ), true);
         }
+
+        // Get the temp order timeout value and localize to popup timout.
+        $popup_timeout = self::get_temp_order_timeout();
+        // Convert to milliseconds for JS
+        $popup_timeout = $popup_timeout * 1000;
 
         $fastspring_params = array(
             'ajax_url' => WC_AJAX::get_endpoint('%%endpoint%%'),
             'nonce' => array(
-              'receipt' => wp_create_nonce('wc-fastspring-receipt'),
+              'receipt'             => wp_create_nonce( 'wc-fastspring-receipt' ),
+              'create_actual_order' => wp_create_nonce( 'wc-fastspring-create-actual-order' ),
             ),
+            'popup_timeout' => $popup_timeout,
           );
 
         $custom_css = '.woocommerce-checkout #payment ul.payment_methods li img.fastspring-icon { max-width: 40px; padding-left: 3px; margin: 0; }';
@@ -254,12 +267,16 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
      */
     public function process_payment($order_id)
     {
+        // Now handled in WC_Gateway_FastSpring_Orders->create_temp_order_cb AJAX callback.
+/*
         $order = wc_get_order($order_id);
 
         return array(
           'result' => 'success',
           'session' => WC_Gateway_FastSpring_Builder::get_secure_json_payload(),
         );
+*/
+        return array();
     }
 
     /**
@@ -312,4 +329,89 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
             echo wpautop(wptexturize(trim($description)));
         }
     }
+
+    /**
+     * Parse a human-readable time format into seconds.
+     *
+     * @param string $time_string The input time string (e.g., "1h 5m 3s", "3 hours", "2 minutes 1 second").
+     * 
+     * @return int The time in seconds.
+     */
+    public static function parse_time_to_seconds( $time_string ) {
+        $time_string     = strtolower( trim($time_string) );
+        $time_in_seconds = 0;
+
+        // Match patterns for hours, minutes, and seconds
+        if ( preg_match( '/(\d+)\s*h(?:ours?)?/', $time_string, $matches ) )
+            $time_in_seconds += intval($matches[1]) * HOUR_IN_SECONDS;
+
+        if ( preg_match( '/(\d+)\s*m(?:inutes?)?/', $time_string, $matches ) )
+            $time_in_seconds += intval($matches[1]) * MINUTE_IN_SECONDS;
+
+        if ( preg_match( '/(\d+)\s*s(?:econds?)?/', $time_string, $matches ) )
+            $time_in_seconds += intval($matches[1]);
+
+        return $time_in_seconds;
+    }
+
+    /**
+     * Validate the temp order deletion time setting.
+     *
+     * @param string $key The setting key.
+     * @param string $value The user-provided value.
+     * 
+     * @return string The validated and sanitized value.
+     */
+    public function validate_temp_order_deletion_time_field($key, $value) {
+        $seconds = self::parse_time_to_seconds($value);
+
+        if ( $seconds <= 0 ) :
+            WC_Admin_Settings::add_error(
+                esc_html__( 'Invalid temp order deletion time. Please provide a valid time format (e.g., "1h 5m 3s").', 'woocommerce-gateway-fastspring' )
+
+            );
+            return '24h'; // Default to 24 hours
+        endif;
+
+        return $value;
+    }
+
+    /**
+     * Get the timeout value for temporary orders.
+     *
+     * @return int Timeout in seconds.
+     */
+    public static function get_temp_order_timeout() {
+        return self::parse_time_to_seconds( self::get_setting( 'temp_order_deletion_time' ) ) ?: DAY_IN_SECONDS;
+
+        // Debugging
+        // return MINUTE_IN_SECONDS; // Set to 1 minute for testing
+    }
+
+    /**
+     * Update options after saving settings.
+     *
+     * @return void
+     * 
+     * @hook woocommerce_update_options_payment_gateways_fastspring
+     */
+    public function update_options () {
+        $new_deletion_time = self::get_temp_order_timeout();
+
+        // Get the current interval
+        $current_interval  = wp_get_schedule( 'wc_fs_delete_old_temp_orders' );
+
+        // Determine the new interval
+        $new_interval = ( $new_deletion_time < HOUR_IN_SECONDS ) ?
+            'wc_fs_temp_order_interval__' . $new_deletion_time :
+            'hourly';
+
+        // Reset the schedule if the interval has changed
+        if ( $current_interval !== $new_interval ) :
+            $wc_gateway_fastpring_orders = WC_Gateway_FastSpring_Orders::get_instance();
+            $wc_gateway_fastpring_orders->schedule_delete_old_temp_orders();
+            debug_log( 'Scheduled deletion of old temp orders with interval: ' . $new_interval );
+        endif;
+    }
+
 }

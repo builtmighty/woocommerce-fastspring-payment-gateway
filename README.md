@@ -1,7 +1,8 @@
 # WooCommerce FastSpring Payment Gateway plugin
 
-## NOT CURRENTLY MAINTAINED
-Due to FastSpring's anti privacy policy I am no longer developing this plugin.
+## Mainaned by Built Mighty
+Cyberwombat - "Due to FastSpring's anti privacy policy I am no longer developing this plugin."
+Built Mighty has taken over the development of this plugin and will continue to maintain it.
 
 FastSpring For WooCommerce integrates your [FastSpring](http://fastspring.com) account with your WordPress site. It provides support for both the hosted and popup version of FastSpring and provides webhook and API support for order validation as well as subscription support.
 

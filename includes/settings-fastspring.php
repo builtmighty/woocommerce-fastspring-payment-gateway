@@ -118,6 +118,18 @@ return apply_filters(
       'description' => __('Your FastSpring API password.', 'woocommerce-gateway-fastspring'),
       'desc_tip' => false,
     ),
+    'temp_orders_settings_title' => array(
+      'title' => __('Temporary Orders Settings', 'woocommerce-gateway-fastspring'),
+      'type' => 'title',
+      'description' => __('Configure the behavior of the FastSpring Temporary Orders, including deletion time and other related settings.', 'woocommerce-gateway-fastspring'),
+    ),
+    'temp_order_deletion_time' => array(
+      'title'       => __( 'Temp Order Deletion Time', 'woocommerce-gateway-fastspring' ),
+      'type'        => 'text',
+      'description' => __( 'Set the time after which temporary orders are deleted. You can use formats like "1h 5m 3s", "3 hours", or "2 minutes 1 second". The FastSpring popup timeout is tied to this value. Default is 24 hours.', 'woocommerce-gateway-fastspring' ),
+      'default'     => '24h', // Default to 24 hours
+      'desc_tip'    => true,
+    ),
 
   )
 );

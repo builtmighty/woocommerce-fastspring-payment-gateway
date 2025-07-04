@@ -100,9 +100,17 @@ class WC_Gateway_FastSpring_Handler
 
         $allowed = wp_verify_nonce($payload->security, 'wc-fastspring-receipt');
 
-        if (!$allowed) {
-            wp_send_json_error('Access denied');
-        }
+        // PATCH:
+		// Date: 5-10-2024
+		// Plugin: WooCommerce FastSpring Payment Gateway
+		// Version: 1.2.5
+		// Issue: The nonce does not work when guest checkout is enabled.
+		// Fix: Remove nonce check.
+        $allowed = true;
+
+        // if (!$allowed) {
+        //     wp_send_json_error('Access denied');
+        // }
 
         $order_id = absint(WC()->session->get('current_order'));
 
@@ -128,7 +136,7 @@ class WC_Gateway_FastSpring_Handler
 
             if ($status === 'completed' && $order->payment_complete($payload->reference)) {
                 $this->log(sprintf('Marking order ID %s as completed', $order->get_id()));
-                $order->add_order_note(sprintf(__('FastSpring payment approved (ID: %1$s)', 'woocommerce'), $order->get_id()));
+                $order->add_order_note(sprintf(__('<b>FastSpring payment approved.</b><br/> <b>ID:</b> %1$s', 'woocommerce'), $order->get_id()));
             }
             // We could have a race condition where FS already called webhook so lets not assume its pending
             elseif ($order_status != 'completed') {
@@ -276,20 +284,77 @@ class WC_Gateway_FastSpring_Handler
     }
 
     /**
+     * Add address to order
+     *
+     * @param WC_Order $order - WooCommerce order
+     * @param object $payload - Webhook data
+     * 
+     * @return void
+     */
+    private function add_address_to_order( $order, $payload ) {
+        if ( !isset( $payload->data->customer->address ) )
+            return;
+
+        $address = $payload->data->customer->address;
+
+        // Validate and set address properties
+        $address_city        = isset( $address->city ) ?$address->city : null;
+        $address_region      = isset( $address->region ) ? $address->region : null;
+        $address_postal_code = isset( $address->postalCode ) ? $address->postalCode : null;
+        $address_country     = isset( $address->country ) ? $address->country : null;
+
+        // Update order address
+        $order->set_address( array(
+            'city'     => $address_city,
+            'state'    => $address_region,
+            'postcode' => $address_postal_code,
+            'country'  => $address_country,
+        ), 'billing');
+    }
+
+    /**
      * Handles the order.completed webhook
      *
      * @param array $payload Webhook data
      */
     public function handle_webhook_request_order_completed($payload)
     {
-        $order = $this->find_order_by_fastspring_tag($payload);
+        $order    = $this->find_order_by_fastspring_tag($payload);
+        $order_id = $order->get_id();
+
+        // PATCH:
+        // Date: 6-10-2024
+        // Plugin: WooCommerce FastSpring Payment Gateway
+        // Version: 1.2.5
+        // Issue: $payload is not always and object and $payload->reference property is not always set.
+        // Fix: Add Validation and set to null otherwise.
+        $payload_reference = is_object( $payload ) && isset( $payload->reference ) ?
+            $payload->reference :
+            null;
+
+        // Add address to order
+        $this->add_address_to_order( $order, $payload );
 
         // Only mark complete if not already - webhook can hit multiple times
-        if ($order->get_status() !== 'completed' && $order->payment_complete($payload->reference)) {
-            $this->log(sprintf('Marking order ID %s as complete', $order->get_id()));
-            $order->add_order_note(sprintf(__('FastSpring payment approved (ID: %1$s)', 'woocommerce'), $order->get_id()));
+        if ($order->get_status() !== 'completed' && $order->payment_complete($payload_reference)) {
+            $this->log(sprintf('Marking order ID %s as complete', $order_id));
+            // Extract invoice link
+            $invoice_link = isset( $payload->data->invoiceUrl ) ?
+                '<a href="' . esc_url($payload->data->invoiceUrl) . '" target="_blank">' . $payload->data->invoiceUrl . '</a>' :
+                'N/A';
+
+            // Add order note
+            ob_start();
+            ?>
+            <p><b><?php _e('FastSpring Order Completed.', 'woocommerce'); ?></b></p>
+            <p><b>ID:</b> <?php echo $order_id; ?></p>
+            <p><b>Invoice Link:</b> <?php echo $invoice_link; ?></p>
+            <?php
+            $order_note = ob_get_clean();
+
+            $order->add_order_note($order_note);
         } else {
-            $this->log(sprintf('Failed marking order ID %s as complete', $order->get_id()));
+            $this->log(sprintf('Failed marking order ID %s as complete', $order_id));
         }
     }
 

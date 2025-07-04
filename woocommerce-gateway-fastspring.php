@@ -1,14 +1,14 @@
 <?php
 /*
  * Plugin Name: WooCommerce FastSpring Gateway
- * Description: Accept credit card, PayPal, Amazon Pay and other payments on your store using FastSpring.
+ * Description: Plugin Taken over by Built Mighty because plugin is no longer maintained: https://github.com/cyberwombat/woocommerce-fastspring-payment-gateway/blob/master/README.md - Accept credit card, PayPal, Amazon Pay and other payments on your store using FastSpring.
  * Author: Enradia
  * Author URI: https://enradia.com/
- * Version: 1.2.5
+ * Version: 2.0.0
  * Requires at least: 4.4
- * Tested up to: 4.9.6
+ * Tested up to: 6.6.2
  * WC requires at least: 3.0
- * WC tested up to: 3.4
+ * WC tested up to: 9.3.1
  * Text Domain: woocommerce-gateway-fastspring
  *
  */
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 /**
  * Required minimums and constants
  */
-define('WC_FASTSPRING_VERSION', '1.2.2');
+define('WC_FASTSPRING_VERSION', '2.0.0');
 define('WC_FASTSPRING_SCRIPT', 'https://d1f8f9xcsvx3ha.cloudfront.net/sbl/0.8.3/fastspring-builder.min.js');
 define('WC_FASTSPRING_MIN_PHP_VER', '5.6.0');
 define('WC_FASTSPRING_MIN_WC_VER', '3.0.0');
@@ -72,12 +72,11 @@ if (!class_exists('WC_FastSpring')):
       }
 
       /**
-       * Private unserialize method to prevent unserializing of the *Singleton*
-       * instance.
+       * Public unserialize method to restore the *Singleton* instance.
        *
        * @return void
        */
-      private function __wakeup()
+      public function __wakeup()
       {
       }
 
@@ -97,6 +96,7 @@ if (!class_exists('WC_FastSpring')):
           add_action('admin_notices', array($this, 'admin_notices'), 15);
           add_action('plugins_loaded', array($this, 'init'));
           self::set_settings();
+          add_action( 'before_woocommerce_init', array( $this, 'declare_hpos_compatibility' ) );
       }
 
       /**
@@ -193,6 +193,8 @@ if (!class_exists('WC_FastSpring')):
           add_filter('script_loader_tag', array($this, 'modify_loading_scripts'), 20, 2);
           add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'plugin_action_links'));
           include_once dirname(__FILE__) . '/includes/class-wc-gateway-fastspring-handler.php';
+          include_once dirname(__FILE__) . '/includes/class-wc-gateway-fastspring-checkout.php';
+          include_once dirname(__FILE__) . '/includes/class-wc-gateway-fastspring-orders.php';
       }
 
       /**
@@ -373,15 +375,37 @@ if (!class_exists('WC_FastSpring')):
       {
 
           // Static function so we need to get options another way
-          $settings = self::get_setting('woocommerce_fastspring_settings', array());
+          $settings = self::get_setting('woocommerce_fastspring_settings');
 
-          if ($settings['logging'] || defined('WP_DEBUG') && WP_DEBUG) {
+          if (
+            isset( $settings['logging'] ) ||
+            defined('WP_DEBUG') &&
+            WP_DEBUG
+          ) {
               if (empty(self::$log)) {
                   self::$log = new WC_Logger();
               }
               self::$log->add('woocommerce-gateway-fastspring', $message);
           }
       }
+
+    /**
+     * Declare compatibility with HPOS.
+     * 
+     * @return void
+     */
+    public function declare_hpos_compatibility() {
+        if ( ! method_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil', 'declare_compatibility' ) ) {
+            return;
+        }
+
+        // Declare compatibility with custom order tables feature for WC HPOS.
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            __FILE__,
+            true // true = compatible
+        );
+    }
   }
 
   $GLOBALS['wc_fastspring'] = WC_FastSpring::get_instance();
