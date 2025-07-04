@@ -97,3 +97,16 @@ N/A
 
 = 1.3.0 =
 * Address functionality which passes discounts from WooCommerce to FastSpring
+
+= 2.0.0 =
+* Built Mighty has taken over plugin maintenance. Updated author/contributor details.
+* Full compatibility with WooCommerce 9.3.1 and WordPress 6.6.2.
+* Feature: Discounts and coupons now sync from WooCommerce to FastSpring, including proportional distribution and display in FastSpring checkout.
+* Feature: New settings for temporary order deletion time—customize FastSpring popup session timeout and temp order lifetime.
+* Improvement: Popup checkout now supports session timeout with automatic page refresh after expiry.
+* Improvement: Better error handling and user feedback during checkout, including multi-message display.
+* Improvement: Admin can now use human-readable time formats (e.g., "1h 5m") for temp order deletion in settings.
+* Improvement: Improved FastSpring webhook handling—customer address and invoice URL are now attached to orders.
+* Patch: Improved nonce handling for guest checkout compatibility.
+* Patch: Improved logging and minor performance tweaks.
+* Misc: Updated plugin meta, version numbers, and documentation.
