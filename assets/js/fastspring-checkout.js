@@ -229,12 +229,12 @@ function submitError (errorMessage) {
 function isFastSpringSelected () {
   return jQuery('.woocommerce-checkout input[name="payment_method"]:checked').attr('id') === 'payment_method_fastspring'
 }
-checkoutForm.on('click', jQuery('#place_order'), function(e){
+checkoutForm.on('click', '#place_order', function(e){
   if (isFastSpringSelected()) {
     e.stopImmediatePropagation();
     e.preventDefault();
-    doSubmit()
-    return false
+    doSubmit();
+    return false;
   }
 })
 

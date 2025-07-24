@@ -238,8 +238,11 @@ class WC_Gateway_FastSpring_Orders
         )
             return;
 
-        // Update the order with customer data
+        // Ensure the order is associated with the current logged-in user
         $this->ensure_order_customer_is_current_user( $order );
+
+        // Update the order with customer data
+        $this->update_order_with_customer_data( $order, $form_data );
 
         // Update the order with the current cart contents
         $order->remove_order_items();
@@ -793,7 +796,6 @@ class WC_Gateway_FastSpring_Orders
 
         // Update the order with the customer data
         $this->update_order_with_customer_data( $order, $form_data );
-
 
         // Set Order Created Via
         $order->set_created_via( 'checkout' );
