@@ -1,10 +1,10 @@
 ﻿=== FastSpring for WooCommerce ===
 Contributors: Enradia, Built Mighty
 Tags: WooCommerce, Payment Gateway
-Version: 2.0.0
-Requires PHP: 5.0.0
-Requires at least: 9.3.1
-Tested up to: 6.6.2
+Version: 2.1.0
+Requires PHP: 7.4
+Requires at least: 4.4
+Tested up to: 6.8.1
 Contributor: cyberwombat, Built Mighty
 Stable tag: trunk
 License: MIT
@@ -110,3 +110,9 @@ N/A
 * Patch: Improved nonce handling for guest checkout compatibility.
 * Patch: Improved logging and minor performance tweaks.
 * Misc: Updated plugin meta, version numbers, and documentation.
+
+= 2.1.0 =
+* Fixed JavaScript event binding for the `#place_order` button and improved code consistency in `fastspring-checkout.js`.
+* Ensured orders are properly associated with the current logged-in user before updating customer data.
+* Cleaned up order creation logic for better readability and maintainability.
+* Updated plugin version and compatibility metadata for WordPress and WooCommerce.
