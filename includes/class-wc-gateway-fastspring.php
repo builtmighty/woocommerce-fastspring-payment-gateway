@@ -71,7 +71,7 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
         add_action('woocommerce_api_wc_gateway_fastspring_commerce', array($this, 'return_handler'));
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'update_options') );
 
-
+        add_action('wp_footer', array( $this, 'reload_checkout_on_order_received_script') );
 
     }
 
@@ -414,4 +414,68 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
         endif;
     }
 
+    /**
+     * Reload the checkout page on order received.
+     *
+     * @return void
+     *
+     * @hook - action - wp_footer
+     */
+    public function reload_checkout_on_order_received_script() {
+        if ( ! is_checkout() )
+            return;
+        ?>
+        <script id="wc-fs-reload-page-on-checkout-js">
+            // Only run if on checkout page and checkout (order received) not present.
+            if (document.querySelectorAll('.woocommerce').length) {
+                return;
+            }
+
+            if (window.location.search.indexOf('fs_force_reload=1') !== -1) {
+                // Create and show spinner
+                var spinner = document.createElement('div');
+                spinner.id = 'wc-fs-reload-spinner';
+                spinner.innerHTML = '<div class="fs-spinner"></div>';
+                document.body.appendChild(spinner);
+
+                // Emit a custom event for theme listeners
+                document.dispatchEvent(new CustomEvent('wc_fs_checkout_reload_spinner'));
+
+                // Remove the query parameter before reload
+                var url = new URL(window.location.href);
+                url.searchParams.delete('fs_force_reload');
+                setTimeout(function() {
+                    window.location.replace(url.toString());
+                }, 100); // Minimal delay for browser stability
+            }
+        </script>
+        <style id="wc-fs-reload-page-on-checkout-css">
+            #wc-fs-reload-spinner {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(255,255,255,0.7);
+                z-index: 999999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: wait;
+            }
+            #wc-fs-reload-spinner .fs-spinner {
+                border: 8px solid #eee;
+                border-top: 8px solid #333;
+                border-radius: 50%;
+                width: 60px;
+                height: 60px;
+                animation: fs-spin 1s linear infinite;
+            }
+            @keyframes fs-spin {
+                0% { transform: rotate(0deg);}
+                100% { transform: rotate(360deg);}
+            }
+        </style>
+        <?php
+    }
 }

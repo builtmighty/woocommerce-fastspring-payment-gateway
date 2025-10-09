@@ -117,6 +117,10 @@ class WC_Gateway_FastSpring_Handler
         $this->log(sprintf('Generating receipt for order %s', $order_id));
 
         $order = wc_get_order($order_id);
+
+        // Ensure session is set for current_order
+        WC()->session->set('current_order', $order_id);
+
         $data = ['order_id' => $order->get_id()];
 
         // Check for double calls
