@@ -56,7 +56,8 @@ function fastspringPopupCloseHandler(data) { // eslint-disable-line no-unused-va
             requestPaymentCompletionUrl(data || {}, function (err, res) {
               console.log('requestPaymentCompletionUrl', err, res);
               if (!err) {
-                window.location = res.redirect_url
+                // window.location = res.redirect_url;
+                window.location.replace(res.redirect_url + '&fs_force_reload=1');
               } else {
                 throw new Error(err)
               }
