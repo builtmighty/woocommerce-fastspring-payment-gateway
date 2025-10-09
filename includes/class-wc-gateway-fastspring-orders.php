@@ -778,6 +778,8 @@ class WC_Gateway_FastSpring_Orders
         // Retrieve the order ID from the session
         $order_id = WC()->session->get( 'order_awaiting_payment' );
 
+        WC()->session->set('current_order', $order_id);
+
         if ( ! $order_id ) :
             wp_send_json_error( 'Order ID not found in session' );
             return;
