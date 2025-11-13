@@ -121,3 +121,7 @@ N/A
 * Added reload_checkout_on_order_received_script to reload checkout after payment completion.
 * Improved order ID tracking in WooCommerce session for consistent order management.
 * Updated redirect logic for smoother post-payment experience.
+
+= 2.3.0 =
+* Improved checkout process reliability by adding an `isCheckoutProcessing` flag to prevent double submissions and duplicate orders.
+* Enhanced event handling for the `#place_order` button to support both click and keyboard events, restricting form submission to valid user actions (only on Enter key for keyboard events).
