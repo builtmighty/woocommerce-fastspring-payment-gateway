@@ -1,8 +1,11 @@
 /* globals jQuery, woocommerce_fastspring_params, fastspring, wc_checkout_params */
-var checkoutForm = jQuery('form.checkout')
+var checkoutForm = jQuery('form.checkout'),
+  isCheckoutProcessing = false;
+
 
 function setLoadingDone () {
   checkoutForm.removeClass('processing').unblock()
+  isCheckoutProcessing = false;
 }
 
 function setLoadingOn () {
@@ -197,6 +200,8 @@ function setTempOrder() {
 }
 // Checkout form handler - create order and launch FS
 function doSubmit () {
+  if (isCheckoutProcessing) return; // Prevent double submission
+  isCheckoutProcessing = true;
   setLoadingOn()
   setTempOrder();
 }
@@ -230,10 +235,14 @@ function submitError (errorMessage) {
 function isFastSpringSelected () {
   return jQuery('.woocommerce-checkout input[name="payment_method"]:checked').attr('id') === 'payment_method_fastspring'
 }
-checkoutForm.on('click', '#place_order', function(e){
+checkoutForm.on('click keypress', '#place_order', function(e){
   if (isFastSpringSelected()) {
+    if (e.type === 'keypress' && e.key !== 'Enter') {
+      return;
+    }
     e.stopImmediatePropagation();
     e.preventDefault();
+    
     doSubmit();
     return false;
   }

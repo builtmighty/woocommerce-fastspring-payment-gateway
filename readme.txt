@@ -1,7 +1,7 @@
 ﻿=== FastSpring for WooCommerce ===
 Contributors: Enradia, Built Mighty
 Tags: WooCommerce, Payment Gateway
-Version: 2.2.0
+Version: 2.3.0
 Requires PHP: 7.4
 Requires at least: 4.4
 Tested up to: 6.8.1
@@ -116,3 +116,12 @@ N/A
 * Ensured orders are properly associated with the current logged-in user before updating customer data.
 * Cleaned up order creation logic for better readability and maintainability.
 * Updated plugin version and compatibility metadata for WordPress and WooCommerce.
+
+= 2.2.0 =
+* Added reload_checkout_on_order_received_script to reload checkout after payment completion.
+* Improved order ID tracking in WooCommerce session for consistent order management.
+* Updated redirect logic for smoother post-payment experience.
+
+= 2.3.0 =
+* Improved checkout process reliability by adding an `isCheckoutProcessing` flag to prevent double submissions and duplicate orders.
+* Enhanced event handling for the `#place_order` button to support both click and keyboard events, restricting form submission to valid user actions (only on Enter key for keyboard events).
