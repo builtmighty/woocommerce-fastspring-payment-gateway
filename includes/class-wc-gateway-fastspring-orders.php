@@ -78,6 +78,29 @@ class WC_Gateway_FastSpring_Orders
         add_action('woocommerce_cart_emptied', array($this, 'cart_emptied'));
     }
 
+
+    /**
+     * Is Temporary Order
+     * 
+     * @param int|WC_Order $order_or_id - The Order ID or WC_Order object
+     * 
+     * @return bool - True if the order is temporary, false otherwise
+     */
+    public static function is_temp_order( $order_or_id ) {
+        if ( is_numeric( $order_or_id ) ) :
+            $order = wc_get_order( $order_or_id );
+        elseif ( is_a( $order_or_id, 'WC_Order' ) ) :
+            $order = $order_or_id;
+        else :
+            return false;
+        endif;
+
+        if ( ! $order )
+            return false;
+
+        return $order->get_meta( '_is_temp_order' ) === 'yes';
+    }
+
     /**
      * Schedule Delete Old Temporary Orders
      * 
@@ -311,14 +334,36 @@ class WC_Gateway_FastSpring_Orders
      * @return int|bool - The Order ID if successful, false otherwise
      */
     public function create_temp_order( $form_data, $wc_checkout ) {
+        // Backup applied coupons
+        $applied_discounts = [
+            'applied_coupons' => WC()->cart->get_applied_coupons(),
+        ];
+
+        WC()->session->set( 'wc_fs_applied_discounts', $applied_discounts );
+
+        // Remove all coupons
+        foreach ( $applied_discounts['applied_coupons'] as $code ) :
+            WC()->cart->remove_coupon( $code );
+        endforeach;
+
+        do_action( 'wc_fs_before_create_temp_order', WC()->cart );
+
         // Create the order
         $order_id = $wc_checkout->create_order( $form_data );
         $order    = wc_get_order( $order_id );
+
+        // Restore coupons to cart/session
+        foreach ( $applied_discounts['applied_coupons'] as $code ) :
+            WC()->cart->apply_coupon( $code );
+        endforeach;
+
+        do_action( 'wc_fs_after_create_temp_order', WC()->cart );
 
         if ( ! $order )
             return false;
 
         // Add custom meta to mark as temporary
+        // NOTE: We are not storing this in the Temp Order Data Array to ensure it is easily queryable with a meta query.
         $order->update_meta_data( '_is_temp_order', 'yes' );
 
         // Add an order note.
@@ -344,7 +389,7 @@ class WC_Gateway_FastSpring_Orders
         $existing_temp_order_id = WC()->session->get( 'order_awaiting_payment' );
 
         // Validate the form data before creating the order
-        $validation_errors = $this->validate_form_data($form_data);
+        $validation_errors = $this->validate_form_data( $form_data );
 
         if ( ! empty( $validation_errors ) )
             return $validation_errors;
@@ -369,6 +414,43 @@ class WC_Gateway_FastSpring_Orders
             if ( ! $temp_order_id )
                 return array( 'Failed to create order' );
         endif; // endif ( $existing_temp_order_id ) :
+
+        $order = wc_get_order( $temp_order_id );
+
+        // Store applied coupons and discount totals in order meta
+        $temp_order_data = [
+            'applied_coupons' => WC()->cart->get_applied_coupons(),
+            'discount_totals' => WC()->cart->get_coupon_discount_totals(),
+        ];
+
+        /**
+         * Temporary Order Data Filter
+         *
+         * @param array $temp_order_data - The Temporary Order Data
+         * @param WC_Order $order - The Order Object
+         * @param array $form_data - The Checkout Form Data
+         *
+         * @return array - The filtered Temporary Order Data
+         *
+         * @hook filter wc_fs_temp_order_data
+         */
+        $temp_order_data = apply_filters( 'wc_fs_temp_order_data', $temp_order_data, $order, $form_data );
+        
+        $order->update_meta_data( '_fs_temp_order_data', $temp_order_data );
+
+
+        /**
+         * Update Temporary Order Meta Action
+         *
+         * @param WC_Order $order - The Order Object
+         * @param array $form_data - The Checkout Form Data
+         *
+         * @return void
+         *
+         * @hook action wc_fs_update_temp_order_meta
+         */
+        do_action( 'wc_fs_update_temp_order_meta', $order, $form_data );
+        $order->save();
 
         // Generate a new create actual order nonce
         $temp_order_nonce = wp_create_nonce( 'wc-fastspring-create-actual-order' );
@@ -535,7 +617,7 @@ class WC_Gateway_FastSpring_Orders
         if (
             $order &&
             ! in_array( $order->get_status(), array( 'completed', 'on-hold', 'refunded' ), true ) &&
-            $order->get_meta( '_is_temp_order' ) === 'yes'
+            self::is_temp_order( $order_id )
         ) :
             // Clear the order from the session
             WC()->session->set( 'order_awaiting_payment', null );
@@ -650,12 +732,16 @@ class WC_Gateway_FastSpring_Orders
      * 
      */
     private function apply_discounts_to_order( $order ) {
-        // Apply WooCommerce coupons
-        $checkout = new WC_Gateway_FastSpring_Checkout();
-        $coupons  = WC()->cart->get_coupons();
-        foreach ( $coupons as $code => $coupon ) :
-            $checkout->apply_coupon( $code );
-        endforeach;
+        // Apply WooCommerce coupons stored in temp order meta
+        $temp_order_data = $order->get_meta( '_fs_temp_order_data', true );
+        if (
+            isset( $temp_order_data['applied_coupons'] ) &&
+            is_array( $temp_order_data['applied_coupons'] )
+        ) :
+            foreach ( $temp_order_data['applied_coupons'] as $code ) :
+                $order->apply_coupon( $code );
+            endforeach;
+        endif;
 
         /**
          * Apply Discounts to Order Action
@@ -805,8 +891,14 @@ class WC_Gateway_FastSpring_Orders
         // Apply discounts
         $this->apply_discounts_to_order( $order );
 
+        // Clean up applied discounts session variable
+        WC()->session->set( 'wc_fs_applied_discounts', null );
+
         // Remove the temporary order flag
         $order->delete_meta_data( '_is_temp_order' );
+
+        // Remove temporary order data
+        $order->delete_meta_data( '_fs_temp_order_data' );
 
         // Calculate totals
         $order->calculate_totals();
