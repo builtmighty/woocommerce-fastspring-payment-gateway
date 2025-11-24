@@ -343,7 +343,7 @@ class WC_Gateway_FastSpring_Orders
 
         // Remove all coupons
         foreach ( $applied_discounts['applied_coupons'] as $code ) :
-            WC()->cart->remove_coupon($code);
+            WC()->cart->remove_coupon( $code );
         endforeach;
 
         do_action( 'wc_fs_before_create_temp_order', WC()->cart );
