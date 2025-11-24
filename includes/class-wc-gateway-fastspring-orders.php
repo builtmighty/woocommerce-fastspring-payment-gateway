@@ -78,6 +78,29 @@ class WC_Gateway_FastSpring_Orders
         add_action('woocommerce_cart_emptied', array($this, 'cart_emptied'));
     }
 
+
+    /**
+     * Is Temporary Order
+     * 
+     * @param int|WC_Order $order_or_id - The Order ID or WC_Order object
+     * 
+     * @return bool - True if the order is temporary, false otherwise
+     */
+    public static function is_temp_order( $order_or_id ) {
+        if ( is_numeric( $order_or_id ) ) :
+            $order = wc_get_order( $order_or_id );
+        elseif ( is_a( $order_or_id, 'WC_Order' ) ) :
+            $order = $order_or_id;
+        else :
+            return false;
+        endif;
+
+        if ( ! $order )
+            return false;
+
+        return $order->get_meta( '_is_temp_order' ) === 'yes';
+    }
+
     /**
      * Schedule Delete Old Temporary Orders
      * 
@@ -535,7 +558,7 @@ class WC_Gateway_FastSpring_Orders
         if (
             $order &&
             ! in_array( $order->get_status(), array( 'completed', 'on-hold', 'refunded' ), true ) &&
-            $order->get_meta( '_is_temp_order' ) === 'yes'
+            self::is_temp_order( $order_id )
         ) :
             // Clear the order from the session
             WC()->session->set( 'order_awaiting_payment', null );
