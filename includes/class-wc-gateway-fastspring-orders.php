@@ -334,7 +334,7 @@ class WC_Gateway_FastSpring_Orders
      * @return int|bool - The Order ID if successful, false otherwise
      */
     public function create_temp_order( $form_data, $wc_checkout ) {
-        // Backup applied coupons and gift cards
+        // Backup applied coupons
         $applied_discounts = [
             'applied_coupons' => WC()->cart->get_applied_coupons(),
         ];
