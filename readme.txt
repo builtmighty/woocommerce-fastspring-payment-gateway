@@ -129,7 +129,7 @@ N/A
 = 2.4.0 =
 
 * Enhanced temporary order handling by persisting applied coupons and discount data in order meta for improved reliability.
-* Added static is_temp_order method for consistent and reusable temporary order identification.
+* Added static `is_temp_order` method for consistent and reusable temporary order identification.
 * Refactored codebase to use `is_temp_order` for all temporary order checks.
 * During temporary order creation, applied coupons are now backed up, removed from the cart, and restored after order creation to maintain cart consistency.
 * Applied coupons and discount totals are now stored in the `_fs_temp_order_data` meta key, with new `wc_fs_temp_order_data` filter and `wc_fs_update_temp_order_meta` action for extensibility.
