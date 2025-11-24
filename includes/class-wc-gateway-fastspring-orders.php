@@ -352,7 +352,7 @@ class WC_Gateway_FastSpring_Orders
         $order_id = $wc_checkout->create_order( $form_data );
         $order    = wc_get_order( $order_id );
 
-        // Restore coupons and gift cards to cart/session
+        // Restore coupons to cart/session
         foreach ( $applied_discounts['applied_coupons'] as $code ) :
             WC()->cart->apply_coupon( $code );
         endforeach;
