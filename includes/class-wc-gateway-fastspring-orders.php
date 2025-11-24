@@ -891,6 +891,9 @@ class WC_Gateway_FastSpring_Orders
         // Apply discounts
         $this->apply_discounts_to_order( $order );
 
+        // Clean up applied discounts session variable
+        WC()->session->set( 'wc_fs_applied_discounts', null );
+
         // Remove the temporary order flag
         $order->delete_meta_data( '_is_temp_order' );
 
