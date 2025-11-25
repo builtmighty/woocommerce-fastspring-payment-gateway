@@ -1,7 +1,7 @@
 ﻿=== FastSpring for WooCommerce ===
 Contributors: Enradia, Built Mighty
 Tags: WooCommerce, Payment Gateway
-Version: 2.4.0
+Version: 2.5.0
 Requires PHP: 7.4
 Requires at least: 4.4
 Tested up to: 6.8.1
@@ -135,3 +135,9 @@ N/A
 * Applied coupons and discount totals are now stored in the `_fs_temp_order_data` meta key, with new `wc_fs_temp_order_data` filter and `wc_fs_update_temp_order_meta` action for extensibility.
 * Discounts are now applied to finalized orders using data from temporary order meta, not the current cart, ensuring accuracy.
 * Temporary order meta (_fs_temp_order_data) is now deleted when converting to an actual order, preventing stale or orphaned data.
+
+= 2.5.0 =
+
+* Improved the redirect logic in `fastspringPopupCloseHandler` (`assets/js/fastspring-checkout.js`) to check for the existence of `redirect_url` before attempting a redirect, and to construct the URL more robustly using the `URL` API. Throws an error if the redirect URL is missing.
+* Wrapped the reload script in an IIFE and fixed the selector logic in `reload_checkout_on_order_received_script` (`includes/class-wc-gateway-fastspring.php`) to only execute when appropriate.
+* Ensured the reload script is properly closed and executed by moving the closing parenthesis and semicolon into the script block.

@@ -426,28 +426,29 @@ class WC_Gateway_FastSpring extends WC_Payment_Gateway
             return;
         ?>
         <script id="wc-fs-reload-page-on-checkout-js">
-            // Only run if on checkout page and checkout (order received) not present.
-            if (document.querySelectorAll('.woocommerce').length) {
-                return;
-            }
+            (function() {
+                // Only run if on checkout page and checkout (order received) not present.
+                if (document.querySelectorAll('.woocommerce').length > 0) {
+                    return;
+                }
 
-            if (window.location.search.indexOf('fs_force_reload=1') !== -1) {
-                // Create and show spinner
-                var spinner = document.createElement('div');
-                spinner.id = 'wc-fs-reload-spinner';
-                spinner.innerHTML = '<div class="fs-spinner"></div>';
-                document.body.appendChild(spinner);
+                if (window.location.search.indexOf('fs_force_reload=1') !== -1) {
+                    // Create and show spinner
+                    var spinner = document.createElement('div');
+                    spinner.id = 'wc-fs-reload-spinner';
+                    spinner.innerHTML = '<div class="fs-spinner"></div>';
+                    document.body.appendChild(spinner);
 
-                // Emit a custom event for theme listeners
-                document.dispatchEvent(new CustomEvent('wc_fs_checkout_reload_spinner'));
-
-                // Remove the query parameter before reload
-                var url = new URL(window.location.href);
-                url.searchParams.delete('fs_force_reload');
-                setTimeout(function() {
-                    window.location.replace(url.toString());
-                }, 100); // Minimal delay for browser stability
-            }
+                    // Emit a custom event for theme listeners
+                    document.dispatchEvent(new CustomEvent('wc_fs_checkout_reload_spinner'));
+                    // Remove the query parameter before reload
+                    var url = new URL(window.location.href);
+                    url.searchParams.delete('fs_force_reload');
+                    setTimeout(function() {
+                        window.location.replace(url.toString());
+                    }, 100); // Minimal delay for browser stability
+                }
+            })();
         </script>
         <style id="wc-fs-reload-page-on-checkout-css">
             #wc-fs-reload-spinner {
