@@ -59,8 +59,14 @@ function fastspringPopupCloseHandler(data) { // eslint-disable-line no-unused-va
             requestPaymentCompletionUrl(data || {}, function (err, res) {
               console.log('requestPaymentCompletionUrl', err, res);
               if (!err) {
-                // window.location = res.redirect_url;
-                window.location.replace(res.redirect_url + '&fs_force_reload=1');
+                if (res !== undefined && res.redirect_url) {
+                  // window.location = res.redirect_url;
+                  const url = new URL(res.redirect_url, window.location.origin);
+                  url.searchParams.set('fs_force_reload', '1');
+                  window.location.replace(url.toString());
+                } else {
+                  throw new Error('Redirect URL not found');
+                }
               } else {
                 throw new Error(err)
               }
