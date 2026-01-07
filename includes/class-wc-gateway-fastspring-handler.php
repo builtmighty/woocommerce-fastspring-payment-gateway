@@ -98,7 +98,10 @@ class WC_Gateway_FastSpring_Handler
     {
         $payload = json_decode(file_get_contents('php://input'));
 
-        $allowed = wp_verify_nonce($payload->security, 'wc-fastspring-receipt');
+        $security = ( is_object($payload) && isset( $payload->security ) ) ?
+            $payload->security :
+            '';
+        $allowed = wp_verify_nonce( $security, 'wc-fastspring-receipt' );
 
         // PATCH:
 		// Date: 5-10-2024
@@ -121,38 +124,54 @@ class WC_Gateway_FastSpring_Handler
         // Ensure session is set for current_order
         WC()->session->set('current_order', $order_id);
 
-        $data = ['order_id' => $order->get_id()];
+        if ($order) {
+            $data = ['order_id' => $order->get_id()];
+        } else {
+            // Fallback when order does not exist or cannot be loaded.
+            $data = ['order_id' => 0];
+        }
 
-        // Check for double calls
-        $order_status = $order->get_status();
+        // Check for double calls, but avoid calling methods on a non-existent order.
+        $order_status = $order ? $order->get_status() : '';
 
         // Popup closed with payment
-        if ($order && $payload->reference) {
-
-            // Get API order status if available
-            $status = $this->get_order_status($payload->id);
-
-            // Remove cart
-            WC()->cart->empty_cart();
-
-            $order->set_transaction_id($payload->reference);
-            $order->update_meta_data('fs_order_id', $payload->id);
-
-            if ($status === 'completed' && $order->payment_complete($payload->reference)) {
-                $this->log(sprintf('Marking order ID %s as completed', $order->get_id()));
-                $order->add_order_note(sprintf(__('<b>FastSpring payment approved.</b><br/> <b>ID:</b> %1$s', 'woocommerce'), $order->get_id()));
-            }
-            // We could have a race condition where FS already called webhook so lets not assume its pending
-            elseif ($order_status != 'completed') {
-                $order->update_status('pending', __('Order pending payment approval.', 'woocommerce'));
-            }
-
-            $data = ["redirect_url" => WC_Gateway_FastSpring_Handler::get_return_url($order), 'order_id' => $order_id];
-
-            wp_send_json($data);
-        } else {
-            wp_send_json_error('Order not found - Order ID was' . $order_id);
+        // If order or payload reference is missing, bail out early
+        if ( !$order ) {
+            wp_send_json_error( 'Order not found - Order ID was' . $order_id );
+            return;
         }
+            
+        if ( !isset($payload->reference) ) {
+            wp_send_json_error( 'Reference not found' );
+            return;
+        }
+
+        if ( empty( $payload->reference ) ) {
+            wp_send_json_error( 'Reference is empty' );
+            return;
+        }
+
+        // Get API order status if available
+        $status = $this->get_order_status($payload->id);
+
+        // Remove cart
+        WC()->cart->empty_cart();
+
+        $order->set_transaction_id($payload->reference);
+        $order->update_meta_data('fs_order_id', $payload->id);
+
+        if ($status === 'completed' && $order->payment_complete($payload->reference)) {
+            $this->log(sprintf('Marking order ID %s as completed', $order->get_id()));
+            $order->add_order_note(sprintf(__('<b>FastSpring payment approved.</b><br/> <b>ID:</b> %1$s', 'woocommerce'), $order->get_id()));
+        }
+        // We could have a race condition where FS already called webhook so lets not assume its pending
+        elseif ($order_status != 'completed') {
+            $order->update_status('pending', __('Order pending payment approval.', 'woocommerce'));
+        }
+
+        $data = ["redirect_url" => WC_Gateway_FastSpring_Handler::get_return_url($order), 'order_id' => $order_id];
+
+        wp_send_json($data);
     }
 
     /**

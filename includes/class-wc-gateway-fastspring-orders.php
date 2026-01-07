@@ -620,7 +620,12 @@ class WC_Gateway_FastSpring_Orders
             self::is_temp_order( $order_id )
         ) :
             // Clear the order from the session
-            WC()->session->set( 'order_awaiting_payment', null );
+            if (
+                isset( WC()->session ) &&
+                method_exists( WC()->session, 'set' )
+            ) :
+                WC()->session->set( 'order_awaiting_payment', null );
+            endif;
 
             // Delete the order
             $order->delete( true );
