@@ -98,7 +98,10 @@ class WC_Gateway_FastSpring_Handler
     {
         $payload = json_decode(file_get_contents('php://input'));
 
-        $allowed = wp_verify_nonce($payload->security, 'wc-fastspring-receipt');
+        $security = ( is_object($payload ) && isset( $payload->security ) ) ?
+            $payload->security :
+            '';
+        $allowed = wp_verify_nonce( $security, 'wc-fastspring-receipt' );
 
         // PATCH:
 		// Date: 5-10-2024
@@ -121,7 +124,11 @@ class WC_Gateway_FastSpring_Handler
         // Ensure session is set for current_order
         WC()->session->set('current_order', $order_id);
 
-        $data = ['order_id' => $order->get_id()];
+        if ($order) {
+            $data = ['order_id' => $order->get_id()];
+        } else {
+            $data = ['order_id' => 0];
+        }
 
         // Check for double calls
         $order_status = $order->get_status();
