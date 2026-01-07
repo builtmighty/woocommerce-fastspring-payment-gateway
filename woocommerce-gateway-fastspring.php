@@ -4,11 +4,11 @@
  * Description: Plugin Taken over by Built Mighty because plugin is no longer maintained: https://github.com/cyberwombat/woocommerce-fastspring-payment-gateway/blob/master/README.md - Accept credit card, PayPal, Amazon Pay and other payments on your store using FastSpring.
  * Author: Enradia
  * Author URI: https://enradia.com/
- * Version: 2.5.0
+ * Version: 2.5.1
  * Requires at least: 4.4
- * Tested up to: 6.8.1
+ * Tested up to: 6.9
  * WC requires at least: 3.0
- * WC tested up to: 9.9.5
+ * WC tested up to: 10.4.3
  * Text Domain: woocommerce-gateway-fastspring
  *
  */
