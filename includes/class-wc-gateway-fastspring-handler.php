@@ -127,11 +127,12 @@ class WC_Gateway_FastSpring_Handler
         if ($order) {
             $data = ['order_id' => $order->get_id()];
         } else {
+            // Fallback when order does not exist or cannot be loaded.
             $data = ['order_id' => 0];
         }
 
-        // Check for double calls
-        $order_status = $order->get_status();
+        // Check for double calls, but avoid calling methods on a non-existent order.
+        $order_status = $order ? $order->get_status() : '';
 
         // Popup closed with payment
         if ($order && $payload->reference) {
