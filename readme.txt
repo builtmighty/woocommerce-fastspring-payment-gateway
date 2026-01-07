@@ -141,3 +141,8 @@ N/A
 * Improved the redirect logic in `fastspringPopupCloseHandler` (`assets/js/fastspring-checkout.js`) to check for the existence of `redirect_url` before attempting a redirect, and to construct the URL more robustly using the `URL` API. Throws an error if the redirect URL is missing.
 * Wrapped the reload script in an IIFE and fixed the selector logic in `reload_checkout_on_order_received_script` (`includes/class-wc-gateway-fastspring.php`) to only execute when appropriate.
 * Ensured the reload script is properly closed and executed by moving the closing parenthesis and semicolon into the script block.
+
+= 2.5.1 =
+* Improved nonce verification in `ajax_get_receipt()` by checking for the security field before verifying, preventing errors from malformed payloads.
+* Enhanced order data handling in `ajax_get_receipt()` by setting `order_id` to `0` if the order object is not found, avoiding undefined variable issues.
+* Added checks before clearing the session in `delete_temp_order()` to ensure the session object exists and supports the required method, preventing runtime errors.
