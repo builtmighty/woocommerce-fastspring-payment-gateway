@@ -98,7 +98,7 @@ class WC_Gateway_FastSpring_Handler
     {
         $payload = json_decode(file_get_contents('php://input'));
 
-        $security = ( is_object($payload ) && isset( $payload->security ) ) ?
+        $security = ( is_object($payload) && isset( $payload->security ) ) ?
             $payload->security :
             '';
         $allowed = wp_verify_nonce( $security, 'wc-fastspring-receipt' );
