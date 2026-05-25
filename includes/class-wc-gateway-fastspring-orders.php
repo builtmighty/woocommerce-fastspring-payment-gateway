@@ -366,6 +366,10 @@ class WC_Gateway_FastSpring_Orders
         // NOTE: We are not storing this in the Temp Order Data Array to ensure it is easily queryable with a meta query.
         $order->update_meta_data( '_is_temp_order', 'yes' );
 
+        // Timestamp the FS checkout start so the cleanup cron can exempt orders
+        // whose FastSpring session may still be in flight (VAL-879).
+        $order->update_meta_data( '_fs_checkout_started_at', time() );
+
         // Add an order note.
         $order->add_order_note( 'Temporary order created.' );
 
@@ -686,17 +690,37 @@ class WC_Gateway_FastSpring_Orders
     }
 
     /**
+     * Get the exemption window for in-flight FastSpring checkout sessions (VAL-879).
+     *
+     * Temp orders whose `_fs_checkout_started_at` timestamp falls within this
+     * window are skipped by the cleanup cron, so an active FastSpring popup
+     * session can never have its underlying Woo order deleted out from under it.
+     *
+     * Defaults to 7 days. Filter `wc_fs_session_exemption_window` to override.
+     *
+     * @return int Exemption window in seconds.
+     */
+    public static function get_fs_session_exemption_window() {
+        return (int) apply_filters( 'wc_fs_session_exemption_window', 7 * DAY_IN_SECONDS );
+    }
+
+    /**
      * Delete Old Temporary Orders
-     * 
+     *
      * @return void
-     * 
+     *
      * @hook wc_fs_delete_old_temp_orders
      */
     public function delete_old_temp_orders() {
-        // Delete orders older than 24 hours
+        // Delete orders older than the configured timeout (default 24h)
         $time_out = WC_Gateway_FastSpring::get_temp_order_timeout();
 
         $time     = ( time() - $time_out );
+
+        // VAL-879: orders whose FS checkout started within the exemption window
+        // are still considered potentially in-flight and must not be deleted.
+        $exemption_window    = self::get_fs_session_exemption_window();
+        $exemption_threshold = time() - $exemption_window;
 
         // Query for pending temporary orders
         $args = array(
@@ -709,6 +733,12 @@ class WC_Gateway_FastSpring_Orders
         $orders = wc_get_orders( $args );
 
         foreach ( $orders as $order ) :
+            // Skip orders with an FS checkout session inside the exemption window (VAL-879).
+            $fs_started_at = (int) $order->get_meta( '_fs_checkout_started_at' );
+            if ( $fs_started_at > 0 && $fs_started_at > $exemption_threshold ) :
+                continue;
+            endif;
+
             $this->delete_temp_order( $order->get_id() );
         endforeach;
     }

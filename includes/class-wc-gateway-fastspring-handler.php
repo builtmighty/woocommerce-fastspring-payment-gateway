@@ -211,6 +211,10 @@ class WC_Gateway_FastSpring_Handler
 
         add_action('woocommerce_api_wc_gateway_fastspring', array($this, 'listen_webhook_request'));
         add_action('woocommerce_fastspring_handle_webhook_request', array($this, 'handle_webhook_request'));
+
+        // VAL-879: surface missing-order webhooks to admins.
+        add_action('admin_notices', array($this, 'maybe_show_orphan_admin_notice'));
+        add_action('admin_post_wc_fs_dismiss_orphan_notices', array($this, 'dismiss_orphan_notices'));
     }
 
     /**
@@ -245,6 +249,9 @@ class WC_Gateway_FastSpring_Handler
 
         if (!isset($id)) {
             $this->log('No order ID found in webhook');
+            // VAL-879: capture for review — payload is unusable without store_order_id
+            // but we still want an admin alert so the failure isn't silent.
+            $this->quarantine_orphan_webhook($payload, 'unknown');
             throw new Exception('No order ID found in webhook');
         }
 
@@ -252,9 +259,175 @@ class WC_Gateway_FastSpring_Handler
 
         if (!$order) {
             $this->log(sprintf('No order found with transaction ID %s', $id));
+            // VAL-879: order vanished between checkout and payment (cleanup cron race).
+            // Quarantine the payload, alert the team, then continue raising so FS retries.
+            $this->quarantine_orphan_webhook($payload, $id);
             throw new Exception(sprintf('Unable to locate order with FS transaction ID %s', $id));
         }
         return $order;
+    }
+
+    /**
+     * Record an FS webhook whose Woo order is missing and alert the team (VAL-879).
+     *
+     * Persists a summary entry in the `wc_fs_orphan_webhooks` option for the admin
+     * notice to read, and emails the site admin once per FS reference per day.
+     * The full payload is also written to the FastSpring log for forensic replay.
+     *
+     * @param object $payload            The FS webhook event payload
+     * @param string $expected_order_id  The Woo order ID we tried to load (or 'unknown')
+     * @return void
+     */
+    private function quarantine_orphan_webhook( $payload, $expected_order_id )
+    {
+        $fs_reference   = isset($payload->reference) ? (string) $payload->reference : null;
+        $event_type     = isset($payload->type) ? (string) $payload->type : 'unknown';
+        $customer_email = isset($payload->data->customer->email) ? (string) $payload->data->customer->email : null;
+        $amount         = isset($payload->data->totalValue) ? $payload->data->totalValue : (
+            isset($payload->data->total) ? $payload->data->total : null
+        );
+        $currency       = isset($payload->data->currency) ? (string) $payload->data->currency : null;
+
+        // Forensic dump — full payload to the FS log so we can replay manually.
+        $this->log( sprintf(
+            'VAL-879 ORPHAN WEBHOOK — event=%s expected_order_id=%s fs_reference=%s payload=%s',
+            $event_type,
+            $expected_order_id,
+            $fs_reference ?: 'unknown',
+            wp_json_encode( $payload )
+        ) );
+
+        // Persist a lightweight summary for the admin notice.
+        $orphans = get_option( 'wc_fs_orphan_webhooks', array() );
+        if ( ! is_array( $orphans ) ) {
+            $orphans = array();
+        }
+        $orphans[] = array(
+            'received_at'       => current_time( 'mysql', true ),
+            'event_type'        => $event_type,
+            'expected_order_id' => $expected_order_id,
+            'fs_reference'      => $fs_reference,
+            'customer_email'    => $customer_email,
+            'amount'            => $amount,
+            'currency'          => $currency,
+        );
+        // Cap at 100 entries so the option can't grow without bound.
+        if ( count( $orphans ) > 100 ) {
+            $orphans = array_slice( $orphans, -100 );
+        }
+        update_option( 'wc_fs_orphan_webhooks', $orphans, false );
+
+        // Dedupe email alerts per FS reference per 24h so retry storms don't spam.
+        $dedupe_key = 'wc_fs_orphan_alert_' . md5( $fs_reference ?: $expected_order_id );
+        if ( get_transient( $dedupe_key ) ) {
+            $this->log( sprintf( 'VAL-879 orphan alert suppressed (already sent within 24h) for FS reference %s', $fs_reference ?: 'unknown' ) );
+            return;
+        }
+        set_transient( $dedupe_key, 1, DAY_IN_SECONDS );
+
+        $this->send_orphan_webhook_email( $event_type, $expected_order_id, $fs_reference, $customer_email, $amount, $currency );
+    }
+
+    /**
+     * Email the site admin about a missing-order webhook (VAL-879).
+     *
+     * @return void
+     */
+    private function send_orphan_webhook_email( $event_type, $expected_order_id, $fs_reference, $customer_email, $amount, $currency )
+    {
+        $admin_email = get_option( 'admin_email' );
+        if ( empty( $admin_email ) ) {
+            $this->log( 'VAL-879 cannot send orphan alert — admin_email is empty' );
+            return;
+        }
+
+        $site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+
+        $subject = sprintf(
+            '[%s] FastSpring webhook for missing Woo order #%s',
+            $site_name,
+            $expected_order_id
+        );
+
+        $logs_url = admin_url( 'admin.php?page=wc-status&tab=logs' );
+
+        $body  = "A FastSpring webhook arrived referencing a Woo order that no longer exists.\n";
+        $body .= "The customer's payment was processed by FastSpring but no license was issued.\n";
+        $body .= "Manual recovery is required.\n\n";
+        $body .= "Event type:           {$event_type}\n";
+        $body .= "FS reference:         " . ( $fs_reference ?: 'unknown' ) . "\n";
+        $body .= "Expected Woo order:   #{$expected_order_id}\n";
+        $body .= "Customer email:       " . ( $customer_email ?: 'unknown' ) . "\n";
+        $body .= "Amount:               " . ( $amount !== null ? $amount : 'unknown' ) . ' ' . ( $currency ?: '' ) . "\n\n";
+        $body .= "Full payload has been logged to the FastSpring log on the server.\n";
+        $body .= "Review at: {$logs_url}\n";
+
+        $sent = wp_mail( $admin_email, $subject, $body );
+        $this->log( sprintf(
+            'VAL-879 orphan alert email %s for FS reference %s (to %s)',
+            $sent ? 'sent' : 'FAILED',
+            $fs_reference ?: 'unknown',
+            $admin_email
+        ) );
+    }
+
+    /**
+     * Show an admin notice when orphan webhooks have been quarantined (VAL-879).
+     *
+     * @return void
+     *
+     * @hook admin_notices
+     */
+    public function maybe_show_orphan_admin_notice()
+    {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            return;
+        }
+
+        $orphans = get_option( 'wc_fs_orphan_webhooks', array() );
+        if ( empty( $orphans ) || ! is_array( $orphans ) ) {
+            return;
+        }
+
+        $count        = count( $orphans );
+        $latest       = end( $orphans );
+        $latest_ref   = isset( $latest['fs_reference'] ) ? $latest['fs_reference'] : 'unknown';
+        $latest_email = isset( $latest['customer_email'] ) ? $latest['customer_email'] : 'unknown';
+        $dismiss_url  = wp_nonce_url(
+            admin_url( 'admin-post.php?action=wc_fs_dismiss_orphan_notices' ),
+            'wc_fs_dismiss_orphan_notices'
+        );
+        $logs_url     = admin_url( 'admin.php?page=wc-status&tab=logs' );
+
+        printf(
+            '<div class="notice notice-error"><p><strong>FastSpring:</strong> %d orphan webhook(s) — payment received but no matching Woo order. Latest: FS reference <code>%s</code> for <code>%s</code>. Check the <a href="%s">FastSpring log</a> for the full payload and replay manually. <a href="%s">Dismiss</a></p></div>',
+            (int) $count,
+            esc_html( $latest_ref ),
+            esc_html( $latest_email ),
+            esc_url( $logs_url ),
+            esc_url( $dismiss_url )
+        );
+    }
+
+    /**
+     * Dismiss the orphan-webhook admin notice (VAL-879).
+     *
+     * @return void
+     *
+     * @hook admin_post_wc_fs_dismiss_orphan_notices
+     */
+    public function dismiss_orphan_notices()
+    {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( 'Forbidden', 'Forbidden', array( 'response' => 403 ) );
+        }
+        check_admin_referer( 'wc_fs_dismiss_orphan_notices' );
+
+        delete_option( 'wc_fs_orphan_webhooks' );
+
+        $redirect = wp_get_referer() ?: admin_url();
+        wp_safe_redirect( $redirect );
+        exit;
     }
 
     /**
