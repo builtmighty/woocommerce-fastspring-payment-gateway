@@ -146,3 +146,9 @@ N/A
 * Improved nonce verification in `ajax_get_receipt()` by checking for the security field before verifying, preventing errors from malformed payloads.
 * Enhanced order data handling in `ajax_get_receipt()` by setting `order_id` to `0` if the order object is not found, avoiding undefined variable issues.
 * Added checks before clearing the session in `delete_temp_order()` to ensure the session object exists and supports the required method, preventing runtime errors.
+
+= 2.6.0 =
+* Stamp temp orders with `_fs_checkout_started_at` at checkout creation so the cleanup cron can detect in-flight FastSpring sessions (VAL-879).
+* Exempt temp orders from `delete_old_temp_orders()` when their FS checkout started within a 7-day window — filterable via `wc_fs_session_exemption_window` — preventing the cron from deleting orders out from under an open FastSpring popup (VAL-879).
+* Quarantine FastSpring webhooks whose referenced Woo order no longer exists: persist a summary entry in the `wc_fs_orphan_webhooks` option, dump the full payload to the FastSpring log, and email the site admin (deduped per FS reference per 24h) so silent webhook failures surface immediately (VAL-879).
+* Add a dismissible admin notice on `manage_woocommerce` screens that summarizes quarantined orphan webhooks and links to the FastSpring log for manual replay (VAL-879).
