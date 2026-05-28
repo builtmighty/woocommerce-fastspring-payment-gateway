@@ -152,3 +152,7 @@ N/A
 * Exempt temp orders from `delete_old_temp_orders()` when their FS checkout started within a 7-day window — filterable via `wc_fs_session_exemption_window` — preventing the cron from deleting orders out from under an open FastSpring popup (VAL-879).
 * Quarantine FastSpring webhooks whose referenced Woo order no longer exists: persist a summary entry in the `wc_fs_orphan_webhooks` option, dump the full payload to the FastSpring log, and email the site admin (deduped per FS reference per 24h) so silent webhook failures surface immediately (VAL-879).
 * Add a dismissible admin notice on `manage_woocommerce` screens that summarizes quarantined orphan webhooks and links to the FastSpring log for manual replay (VAL-879).
+
+= 2.6.1 =
+* Strip the `id` attribute WordPress 6.3+ auto-injects on the FastSpring Builder script tag so our `id="fsc-api"` replacement isn't a duplicate. Browsers keep only the first `id`, which was breaking `document.getElementById('fsc-api')` inside FS Builder and preventing the checkout popup from opening (VAL-882).
+* Clear `_fs_checkout_started_at` when a temp order converts to a real order so the VAL-879 cron-exemption marker no longer lingers on finalized orders (VAL-882).
