@@ -4,7 +4,7 @@
  * Description: Plugin Taken over by Built Mighty because plugin is no longer maintained: https://github.com/cyberwombat/woocommerce-fastspring-payment-gateway/blob/master/README.md - Accept credit card, PayPal, Amazon Pay and other payments on your store using FastSpring.
  * Author: Enradia
  * Author URI: https://enradia.com/
- * Version: 2.6.0
+ * Version: 2.6.1
  * Requires at least: 4.4
  * Tested up to: 6.9
  * WC requires at least: 3.0
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 /**
  * Required minimums and constants
  */
-define('WC_FASTSPRING_VERSION', '2.6.0');
+define('WC_FASTSPRING_VERSION', '2.6.1');
 define('WC_FASTSPRING_SCRIPT', 'https://d1f8f9xcsvx3ha.cloudfront.net/sbl/0.8.3/fastspring-builder.min.js');
 define('WC_FASTSPRING_MIN_PHP_VER', '5.6.0');
 define('WC_FASTSPRING_MIN_WC_VER', '3.0.0');
@@ -144,6 +144,11 @@ if (!class_exists('WC_FastSpring')):
       {
           if ('fastspring' === $handle) {
               $debug = defined('SCRIPT_DEBUG') && SCRIPT_DEBUG ? 'true' : 'false';
+              // VAL-882: WP 6.3+ auto-injects id="fastspring-js" during enqueue. Strip
+              // it so our id="fsc-api" injection below isn't a duplicate — the FS
+              // Builder library locates its own script tag via getElementById('fsc-api')
+              // and throws on null when the browser parses only the first (WP-added) id.
+              $tag = preg_replace( '/\s+id="[^"]*"/', '', $tag, 1 );
               return str_replace(' src', ' id="fsc-api" data-storefront="' . $this->get_storefront_path() . '" data-before-requests-callback="fastspringBeforeRequestHandler" data-access-key="' . self::get_setting('access_key') . '" '. ($debug ? 'data-debug="true" data-test="' . (self::get_setting('testmode') ? 'yes' : 'no') . '" data-version="' . WC_FASTSPRING_VERSION .'" data-data-callback="dataCallbackFunction" data-error-callback="errorCallback"' : '') . ' data-popup-closed="fastspringPopupCloseHandler" src', $tag);
           }
           return $tag;
