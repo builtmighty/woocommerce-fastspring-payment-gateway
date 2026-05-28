@@ -935,6 +935,12 @@ class WC_Gateway_FastSpring_Orders
         // Remove temporary order data
         $order->delete_meta_data( '_fs_temp_order_data' );
 
+        // VAL-882: Clean up the FS checkout timestamp that VAL-879 writes in
+        // create_temp_order(). Once the temp order has been converted to an
+        // actual order the cron exemption no longer applies — leaving the meta
+        // behind clutters completed orders with stale data.
+        $order->delete_meta_data( '_fs_checkout_started_at' );
+
         // Calculate totals
         $order->calculate_totals();
 
