@@ -144,6 +144,11 @@ if (!class_exists('WC_FastSpring')):
       {
           if ('fastspring' === $handle) {
               $debug = defined('SCRIPT_DEBUG') && SCRIPT_DEBUG ? 'true' : 'false';
+              // VAL-882: WP 6.3+ auto-injects id="fastspring-js" during enqueue. Strip
+              // it so our id="fsc-api" injection below isn't a duplicate — the FS
+              // Builder library locates its own script tag via getElementById('fsc-api')
+              // and throws on null when the browser parses only the first (WP-added) id.
+              $tag = preg_replace( '/\s+id="[^"]*"/', '', $tag, 1 );
               return str_replace(' src', ' id="fsc-api" data-storefront="' . $this->get_storefront_path() . '" data-before-requests-callback="fastspringBeforeRequestHandler" data-access-key="' . self::get_setting('access_key') . '" '. ($debug ? 'data-debug="true" data-test="' . (self::get_setting('testmode') ? 'yes' : 'no') . '" data-version="' . WC_FASTSPRING_VERSION .'" data-data-callback="dataCallbackFunction" data-error-callback="errorCallback"' : '') . ' data-popup-closed="fastspringPopupCloseHandler" src', $tag);
           }
           return $tag;
