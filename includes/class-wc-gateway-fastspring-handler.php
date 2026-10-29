@@ -62,33 +62,207 @@ class WC_Gateway_FastSpring_Handler
     }
 
     /**
-     * If API credentials provided we can check for order completion on popup close
+     * Confirm with the FastSpring Orders API that a FastSpring order paid for a Woo order (VAL-924)
+     *
+     * Neither the webhook body nor the browser can be trusted to say an order is paid, so
+     * both completion paths ask FastSpring directly. The FastSpring order must be completed,
+     * live (or a test order when the gateway is in test mode), tagged with this Woo order's
+     * ID, in the same currency and for the same amount.
+     *
+     * @param string   $fs_order_id FastSpring order ID. The API does not accept order references.
+     * @param WC_Order $order       Woo order being paid
+     * @return array {
+     *     @type bool   $ok          True if the payment is confirmed
+     *     @type bool   $transient   True if the check couldn't be completed and is worth retrying
+     *     @type bool   $pending     True if FastSpring has the order but it isn't completed (yet)
+     *     @type string $reason      Why the payment wasn't confirmed
+     *     @type string $fs_order_id FastSpring order ID that was checked
+     *     @type string $reference   FastSpring order reference, used as the transaction ID
+     * }
      */
-    public function get_order_status($id)
+    public function confirm_fastspring_payment($fs_order_id, $order)
     {
+        $fs_order_id = is_scalar($fs_order_id) ? trim((string) $fs_order_id) : '';
+        $result      = array(
+            'ok'          => false,
+            'transient'   => false,
+            'pending'     => false,
+            'reason'      => '',
+            'fs_order_id' => $fs_order_id,
+            'reference'   => '',
+        );
+
+        // The ID is concatenated into the API URL, and on the browser path it comes from the client.
+        if (!preg_match('/^[A-Za-z0-9_-]{8,64}$/', $fs_order_id)) {
+            $result['reason'] = 'missing or malformed FastSpring order ID';
+            return $result;
+        }
+
         if (empty(self::get_setting('api_username')) || empty(self::get_setting('api_password'))) {
-            $this->log('No API credentials - skipping API order confirm');
-            return 'pending';
+            $result['transient'] = true;
+            $result['reason']    = 'no FastSpring API credentials in the gateway settings';
+            return $result;
         }
 
-        $url = 'https://api.fastspring.com/orders/' . $id;
+        $fs_order = null;
 
-        $context = stream_context_create(array(
-            'http' => array(
-              'user_agent' => 'Mozilla/5.0', // Not important what it is but must be set
-              'header' => "Authorization: Basic " . base64_encode(
-                  self::get_setting('api_username') . ':' . self::get_setting('api_password')
-              ),
-            )));
+        for ($attempt = 1; $attempt <= 2 && !$fs_order; $attempt++) {
+            if ($attempt > 1) {
+                sleep(2);
+            }
+            $result['pending'] = false;
 
-        $data = @json_decode(file_get_contents($url, false, $context));
+            $response = wp_remote_get('https://api.fastspring.com/orders/' . rawurlencode($fs_order_id), array(
+                'timeout' => 10,
+                'headers' => array(
+                    'Authorization' => 'Basic ' . base64_encode(self::get_setting('api_username') . ':' . self::get_setting('api_password')),
+                    'Accept'        => 'application/json',
+                    // FastSpring rejects API requests without a User-Agent
+                    'User-Agent'    => 'WooCommerce-FastSpring-Gateway/' . WC_FASTSPRING_VERSION,
+                ),
+            ));
 
-        if ($data && $data->completed === true) {
-            $this->log(sprintf('API order %s completion checked', $id));
-            return 'completed';
+            if (is_wp_error($response)) {
+                $result['transient'] = true;
+                $result['reason']    = 'FastSpring API unreachable: ' . $response->get_error_message();
+                continue;
+            }
+
+            $code = (int) wp_remote_retrieve_response_code($response);
+            $data = json_decode(wp_remote_retrieve_body($response));
+
+            // A known ID returns the order itself. An unknown one returns HTTP 400 with an "orders" error list.
+            if (is_object($data) && isset($data->orders) && is_array($data->orders)) {
+                $data = reset($data->orders);
+            }
+
+            if (200 === $code && is_object($data) && isset($data->id, $data->completed)) {
+                if (true === $data->completed) {
+                    $fs_order = $data;
+                    continue;
+                }
+                // FastSpring may not show a just-paid order as completed yet
+                $result['transient'] = true;
+                $result['pending']   = true;
+                $result['reason']    = 'FastSpring order is not completed';
+                continue;
+            }
+
+            if (429 === $code || $code >= 500) {
+                $result['transient'] = true;
+                $result['reason']    = sprintf('FastSpring API returned HTTP %d', $code);
+                continue;
+            }
+
+            // 401/403 means the API credentials need fixing, after which a retry will work
+            $result['transient'] = in_array($code, array(401, 403), true);
+            $result['reason']    = in_array($code, array(401, 403), true) ?
+                sprintf('FastSpring API rejected the gateway\'s API credentials (HTTP %d)', $code) :
+                sprintf('FastSpring order not found (HTTP %d)', $code);
+            return $result;
         }
-        $this->log(sprintf('API order %s not found', $id));
-        return 'pending';
+
+        if (!$fs_order) {
+            return $result;
+        }
+
+        // A first attempt may have failed before the retry succeeded
+        $result['transient'] = false;
+        $result['reason']    = '';
+
+        $testmode = (bool) self::get_setting('testmode');
+        if ((bool) $fs_order->live === $testmode) {
+            $result['reason'] = $testmode ? 'live FastSpring order while the gateway is in test mode' : 'FastSpring test order';
+            return $result;
+        }
+
+        $tag = isset($fs_order->tags->store_order_id) ? (string) $fs_order->tags->store_order_id : '';
+        if ($tag !== (string) $order->get_id()) {
+            $result['reason'] = sprintf('FastSpring order belongs to Woo order %s', '' !== $tag ? $tag : '(none)');
+            return $result;
+        }
+
+        $currency = isset($fs_order->currency) ? strtoupper((string) $fs_order->currency) : '';
+        if ($currency !== strtoupper($order->get_currency())) {
+            $result['reason'] = sprintf('currency mismatch: FastSpring %s, order %s', $currency, $order->get_currency());
+            return $result;
+        }
+
+        // FastSpring's subtotal is after discounts and before tax; tax is FastSpring's, so the Woo
+        // total excludes it. A temp order doesn't carry its coupons and gift cards until the popup
+        // closes, so a webhook that arrives first is matched on the pre-discount amounts instead.
+        $fs_subtotal = isset($fs_order->subtotal) ? (float) $fs_order->subtotal : -1;
+        $fs_discount = isset($fs_order->discount) ? (float) $fs_order->discount : 0;
+        $tolerance   = 0.01 * max(1, count($order->get_items()));
+
+        $paid_matches         = abs($fs_subtotal - (float) $order->get_total()) <= $tolerance;
+        $pre_discount_matches = WC_Gateway_FastSpring_Orders::is_temp_order($order) &&
+            abs(($fs_subtotal + $fs_discount) - (float) $order->get_subtotal()) <= $tolerance;
+
+        if (!$paid_matches && !$pre_discount_matches) {
+            $result['reason'] = sprintf(
+                'amount mismatch: FastSpring subtotal %s (discount %s), order total %s (subtotal %s)',
+                wc_format_decimal($fs_subtotal, 2),
+                wc_format_decimal($fs_discount, 2),
+                wc_format_decimal($order->get_total(), 2),
+                wc_format_decimal($order->get_subtotal(), 2)
+            );
+            return $result;
+        }
+
+        $result['ok']        = true;
+        $result['reference'] = isset($fs_order->reference) ? (string) $fs_order->reference : '';
+        $this->log(sprintf('FastSpring payment %s (%s) confirmed for order %s', $fs_order_id, $result['reference'], $order->get_id()));
+
+        return $result;
+    }
+
+    /**
+     * Record and report a payment FastSpring didn't confirm (VAL-924)
+     *
+     * @param WC_Order $order        Woo order
+     * @param array    $confirmation Result of confirm_fastspring_payment()
+     * @param string   $source       Which completion path asked: 'webhook' or 'browser return'
+     * @return void
+     */
+    private function handle_unconfirmed_payment($order, $confirmation, $source)
+    {
+        $message = sprintf(
+            'VAL-924 FastSpring payment %s not confirmed for order %s (%s): %s',
+            '' !== $confirmation['fs_order_id'] ? $confirmation['fs_order_id'] : '(none)',
+            $order->get_id(),
+            $source,
+            $confirmation['reason']
+        );
+
+        // A transient failure is retried: FastSpring resends the webhook, or the webhook completes the order.
+        // Only API trouble is worth an alert; an order that isn't completed yet isn't a fault.
+        if ($confirmation['transient']) {
+            $this->log($message, 'warning');
+            if ($confirmation['pending']) {
+                return;
+            }
+            $this->send_admin_alert(
+                'confirm_transient',
+                6 * HOUR_IN_SECONDS,
+                'FastSpring payment checks are failing',
+                $message . "\n\nThe order stays unpaid until FastSpring confirms the payment. FastSpring retries webhooks for up to 7 days.\nRepeated failures usually mean the FastSpring API is down or the API credentials in the gateway settings no longer work.\nFurther alerts like this are suppressed for 6 hours."
+            );
+            return;
+        }
+
+        $this->log($message, 'error');
+        $order->add_order_note(sprintf(
+            __('FastSpring payment not confirmed (%1$s): %2$s. The order was not marked paid.', 'woocommerce-gateway-fastspring'),
+            $source,
+            esc_html($confirmation['reason'])
+        ));
+        $this->send_admin_alert(
+            'confirm_order_' . $order->get_id(),
+            DAY_IN_SECONDS,
+            sprintf('FastSpring payment not confirmed for order #%s', $order->get_id()),
+            $message . "\n\nThe order was left unpaid and no license was issued.\nIf the customer did pay, find the order in FastSpring, check it matches, and complete the Woo order manually.\nOrder: " . $order->get_edit_order_url()
+        );
     }
 
     /**
@@ -151,16 +325,23 @@ class WC_Gateway_FastSpring_Handler
             return;
         }
 
-        // Get API order status if available
-        $status = $this->get_order_status($payload->id);
+        // VAL-924: the FastSpring order ID comes from the browser, so confirm with FastSpring
+        // that it's a completed payment for this order before marking the order paid. An order
+        // the webhook already completed needs no second check.
+        $confirmation = $order_status != 'completed' ?
+            $this->confirm_fastspring_payment(isset($payload->id) ? $payload->id : '', $order) :
+            array('ok' => false);
 
         // Remove cart
         WC()->cart->empty_cart();
 
-        $order->set_transaction_id($payload->reference);
-        $order->update_meta_data('fs_order_id', $payload->id);
+        if ($confirmation['ok']) {
+            $order->update_meta_data('fs_order_id', $confirmation['fs_order_id']);
+        } elseif ($order_status != 'completed') {
+            $this->handle_unconfirmed_payment($order, $confirmation, 'browser return');
+        }
 
-        if ($status === 'completed' && $order->payment_complete($payload->reference)) {
+        if ($confirmation['ok'] && $order->payment_complete($confirmation['reference'])) {
             $this->log(sprintf('Marking order ID %s as completed', $order->get_id()));
             $order->add_order_note(sprintf(__('<b>FastSpring payment approved.</b><br/> <b>ID:</b> %1$s', 'woocommerce'), $order->get_id()));
         }
@@ -222,11 +403,19 @@ class WC_Gateway_FastSpring_Handler
      */
     public function listen_webhook_request()
     {
-        $events = json_decode(file_get_contents('php://input'));
+        $raw_body = file_get_contents('php://input');
 
-        if (!$this->is_valid_webhook_request()) {
-            $this->log('Invalid webhook request - check secret');
-            return wp_send_json_error();
+        if (!$this->is_valid_webhook_request($raw_body)) {
+            // VAL-924: any non-2xx makes FastSpring retry for up to 7 days, so a genuine
+            // webhook rejected by mistake is delayed rather than lost
+            return wp_send_json_error('Invalid webhook signature', 401);
+        }
+
+        $events = json_decode($raw_body);
+
+        if (!is_object($events) && !is_array($events)) {
+            $this->log('Webhook body is not valid JSON', 'warning');
+            return wp_send_json_error('Invalid webhook payload', 400);
         }
 
         foreach ($events as $event) {
@@ -475,7 +664,8 @@ class WC_Gateway_FastSpring_Handler
             $this->log(json_encode($payload));
             return wp_send_json_success();
         } catch (Exception $e) {
-            return wp_send_json_error($e->getMessage());
+            // VAL-924: a 503 code asks FastSpring to retry; everything else keeps the 200 it always had
+            return wp_send_json_error($e->getMessage(), 503 === $e->getCode() ? 503 : null);
         }
     }
 
@@ -518,25 +708,34 @@ class WC_Gateway_FastSpring_Handler
         $order    = $this->find_order_by_fastspring_tag($payload);
         $order_id = $order->get_id();
 
-        // PATCH:
-        // Date: 6-10-2024
-        // Plugin: WooCommerce FastSpring Payment Gateway
-        // Version: 1.2.5
-        // Issue: $payload is not always and object and $payload->reference property is not always set.
-        // Fix: Add Validation and set to null otherwise.
-        $payload_reference = is_object( $payload ) && isset( $payload->reference ) ?
-            $payload->reference :
-            null;
-
         // Add address to order
         $this->add_address_to_order( $order, $payload );
 
         // Only mark complete if not already - webhook can hit multiple times
-        if ($order->get_status() !== 'completed' && $order->payment_complete($payload_reference)) {
+        if ($order->get_status() === 'completed') {
+            $this->log(sprintf('Order ID %s is already complete', $order_id));
+            return;
+        }
+
+        // VAL-924: never complete an order on the webhook's word; confirm the payment with FastSpring first
+        $fs_order_id  = isset($payload->data->id) ? $payload->data->id : (isset($payload->data->order) ? $payload->data->order : '');
+        $confirmation = $this->confirm_fastspring_payment($fs_order_id, $order);
+
+        if (!$confirmation['ok']) {
+            $this->handle_unconfirmed_payment($order, $confirmation, 'webhook');
+            throw new Exception(
+                sprintf('FastSpring payment not confirmed: %s', $confirmation['reason']),
+                $confirmation['transient'] ? 503 : 0
+            );
+        }
+
+        $order->update_meta_data('fs_order_id', $confirmation['fs_order_id']);
+
+        if ($order->payment_complete($confirmation['reference'])) {
             $this->log(sprintf('Marking order ID %s as complete', $order_id));
             // Extract invoice link
             $invoice_link = isset( $payload->data->invoiceUrl ) ?
-                '<a href="' . esc_url($payload->data->invoiceUrl) . '" target="_blank">' . $payload->data->invoiceUrl . '</a>' :
+                '<a href="' . esc_url($payload->data->invoiceUrl) . '" target="_blank">' . esc_html($payload->data->invoiceUrl) . '</a>' :
                 'N/A';
 
             // Add order note
@@ -544,6 +743,7 @@ class WC_Gateway_FastSpring_Handler
             ?>
             <p><b><?php _e('FastSpring Order Completed.', 'woocommerce'); ?></b></p>
             <p><b>ID:</b> <?php echo $order_id; ?></p>
+            <p><b>FastSpring Order:</b> <?php echo esc_html($confirmation['reference']); ?> (payment confirmed with the FastSpring API)</p>
             <p><b>Invoice Link:</b> <?php echo $invoice_link; ?></p>
             <?php
             $order_note = ob_get_clean();
@@ -603,45 +803,174 @@ class WC_Gateway_FastSpring_Handler
     }
 
     /**
-     * Check with FastSpring whether posted data is valid FastSpring webhook
+     * Check the FastSpring HMAC signature on a webhook (VAL-924)
      *
-     * @throws Exception
+     * In "Report only" mode anything but a valid signature is logged and the webhook is still
+     * processed; in "Enforce" mode it's rejected. Payments are confirmed with the FastSpring API
+     * in both modes, so Report only never lets a forged webhook mark an order paid.
      *
-     * @param array $payload Webhook data
-     * @return bool True if payload is valid FastSpring webhook
+     * @param string|null $raw_body Raw request body, read from php://input if omitted
+     * @return bool True if the webhook should be processed
      */
-    public function is_valid_webhook_request()
+    public function is_valid_webhook_request($raw_body = null)
     {
-        $this->log(sprintf('%s: %s', __FUNCTION__, 'Checking FastSpring webhook validity'));
+        if (null === $raw_body) {
+            $raw_body = file_get_contents('php://input');
+        }
 
-        $secret = self::get_setting('webhook_secret');
+        $signature = isset($_SERVER['HTTP_X_FS_SIGNATURE']) ? wp_unslash($_SERVER['HTTP_X_FS_SIGNATURE']) : '';
+        $status    = $this->get_webhook_signature_status($raw_body, $signature);
+        $enforce   = 'enforce' === self::get_setting('webhook_signature_mode');
+        $events    = $this->describe_webhook_events($raw_body);
 
-        $headers = getallheaders();
-        $hash = base64_encode(hash_hmac('sha256', file_get_contents('php://input'), $secret, true));
+        $this->record_webhook_signature_status($status);
 
-        $sig = $_SERVER['HTTP_X_FS_SIGNATURE'];
-
-        if (!$sig) {
-            $this->log('No secret provided by FastSpring webhook');
+        if ('valid' === $status) {
+            $this->log(sprintf('Webhook signature valid (%s)', $events));
             return true;
         }
 
-        if (!$secret) {
-            $this->log('Invalid webhook secret');
-            return false;
+        $labels = array(
+            'missing'   => 'no signature',
+            'invalid'   => 'an invalid signature',
+            'no_secret' => 'no Webhook Secret set in the gateway settings to check it against',
+        );
+        $message = sprintf(
+            'VAL-924 FastSpring webhook with %s (%s, from %s): %s',
+            $labels[$status],
+            $events,
+            WC_Geolocation::get_ip_address(),
+            $enforce ? 'rejected' : 'processed anyway because the signature check is set to Report only'
+        );
+        $this->log($message, $enforce ? 'error' : 'warning');
+
+        if ($enforce) {
+            $this->send_admin_alert(
+                'signature_' . $status,
+                HOUR_IN_SECONDS,
+                sprintf('FastSpring webhook rejected: %s', $labels[$status]),
+                $message . "\n\nFastSpring retries a rejected webhook for up to 7 days, and it can be resent from FastSpring's Webhook Log.\nIf genuine webhooks are being rejected, check that the Webhook Secret in the gateway settings matches the HMAC SHA256 Secret in FastSpring, or set the Webhook Signature Check to Report only.\nFurther alerts like this are suppressed for an hour."
+            );
         }
 
-        return $sig === $hash;
+        return !$enforce;
+    }
+
+    /**
+     * Classify a webhook's FastSpring signature (VAL-924)
+     *
+     * FastSpring signs the raw body with the webhook's HMAC SHA256 Secret and sends the
+     * base64-encoded digest in the X-FS-Signature header.
+     *
+     * @param string $raw_body  Raw request body
+     * @param string $signature Value of the X-FS-Signature header
+     * @return string 'valid', 'missing', 'invalid' or 'no_secret'
+     */
+    public function get_webhook_signature_status($raw_body, $signature)
+    {
+        $secret    = (string) self::get_setting('webhook_secret');
+        $signature = trim((string) $signature);
+
+        if ('' === $secret) {
+            return 'no_secret';
+        }
+
+        if ('' === $signature) {
+            return 'missing';
+        }
+
+        $expected = base64_encode(hash_hmac('sha256', (string) $raw_body, $secret, true));
+
+        return hash_equals($expected, $signature) ? 'valid' : 'invalid';
+    }
+
+    /**
+     * Count webhook signature results for the settings page (VAL-924)
+     *
+     * Approximate: concurrent webhooks can race on the option. It only needs to show
+     * whether anything other than valid signatures is arriving.
+     *
+     * @param string $status Result of get_webhook_signature_status()
+     * @return void
+     */
+    private function record_webhook_signature_status($status)
+    {
+        $tally = get_option('wc_fastspring_webhook_signature_tally', array());
+
+        if (!is_array($tally) || empty($tally['since'])) {
+            $tally = array('since' => current_time('mysql', true));
+        }
+
+        $tally[$status]           = (isset($tally[$status]) ? (int) $tally[$status] : 0) + 1;
+        $tally['last_' . $status] = current_time('mysql', true);
+
+        update_option('wc_fastspring_webhook_signature_tally', $tally, false);
+    }
+
+    /**
+     * Summarize a webhook's events for the log without trusting its contents (VAL-924)
+     *
+     * @param string $raw_body Raw request body
+     * @return string For example "order.completed EVWB5SXET64NFJD6RPVLQYZ4ZSNSZE"
+     */
+    private function describe_webhook_events($raw_body)
+    {
+        $body   = json_decode($raw_body);
+        $events = is_object($body) && isset($body->events) && is_array($body->events) ? $body->events : array();
+        $parts  = array();
+
+        foreach (array_slice($events, 0, 3) as $event) {
+            $type    = isset($event->type) && is_scalar($event->type) ? (string) $event->type : '?';
+            $id      = isset($event->id) && is_scalar($event->id) ? (string) $event->id : '?';
+            $parts[] = preg_replace('/[^A-Za-z0-9._-]/', '', substr($type, 0, 64)) . ' ' . preg_replace('/[^A-Za-z0-9_-]/', '', substr($id, 0, 64));
+        }
+
+        if (count($events) > 3) {
+            $parts[] = sprintf('and %d more', count($events) - 3);
+        }
+
+        return $parts ? implode(', ', $parts) : 'no events';
+    }
+
+    /**
+     * Email the site admin, at most once per key per period (VAL-924)
+     *
+     * @param string $key     What the alert is about, for deduplication
+     * @param int    $period  Seconds to suppress repeats of the same key
+     * @param string $subject Email subject, without the site name
+     * @param string $body    Email body
+     * @return void
+     */
+    private function send_admin_alert($key, $period, $subject, $body)
+    {
+        $dedupe_key = 'wc_fs_alert_' . md5($key);
+        if (get_transient($dedupe_key)) {
+            return;
+        }
+        set_transient($dedupe_key, 1, $period);
+
+        $admin_email = get_option('admin_email');
+        if (empty($admin_email)) {
+            $this->log('VAL-924 cannot send alert because admin_email is empty', 'error');
+            return;
+        }
+
+        $site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES);
+        $body     .= "\n\nSite: " . home_url('/') . "\nFastSpring log: " . admin_url('admin.php?page=wc-status&tab=logs') . "\n";
+
+        $sent = wp_mail($admin_email, sprintf('[%s] %s', $site_name, $subject), $body);
+        $this->log(sprintf('VAL-924 alert email %s: %s', $sent ? 'sent' : 'FAILED', $subject), $sent ? 'notice' : 'error');
     }
 
     /**
      * Logs
      *
      * @param string $message
+     * @param string $level   WooCommerce log level
      */
-    public static function log($message)
+    public static function log($message, $level = 'notice')
     {
-        WC_FastSpring::log($message);
+        WC_FastSpring::log($message, $level);
     }
 }
 
