@@ -376,21 +376,23 @@ if (!class_exists('WC_FastSpring')):
        * And fits on your back?
        * It's log, log, log
        */
-      public static function log($message)
+      public static function log($message, $level = 'notice')
       {
-
-          // Static function so we need to get options another way
-          $settings = self::get_setting('woocommerce_fastspring_settings');
+          // VAL-924: this used to look up a setting that doesn't exist, so the Logging
+          // checkbox never took effect. Warnings and errors are always recorded so
+          // rejected webhooks and failed payment checks are logged even with it off.
+          $always = in_array($level, array('emergency', 'alert', 'critical', 'error', 'warning'), true);
 
           if (
-            isset( $settings['logging'] ) ||
+            $always ||
+            self::get_setting('logging') ||
             defined('WP_DEBUG') &&
             WP_DEBUG
           ) {
               if (empty(self::$log)) {
                   self::$log = new WC_Logger();
               }
-              self::$log->add('woocommerce-gateway-fastspring', $message);
+              self::$log->add('woocommerce-gateway-fastspring', $message, $level);
           }
       }
 
