@@ -418,6 +418,38 @@ class WC_Gateway_FastSpring_Handler
             return wp_send_json_error('Invalid webhook payload', 400);
         }
 
+        // VAL-924: FastSpring also sends test-mode events to the live site (and live events to
+        // staging). Their order tags are another environment's order IDs, which here belong to
+        // unrelated orders, so only events from this site's own mode reach any handler.
+        if (is_object($events) && isset($events->events) && is_array($events->events)) {
+            $live_mode = !self::get_setting('testmode');
+            $kept      = array();
+            $ignored   = array();
+
+            foreach ($events->events as $event) {
+                if (is_object($event) && isset($event->live) && (bool) $event->live !== $live_mode) {
+                    $ignored[] = $event;
+                    continue;
+                }
+                $kept[] = $event;
+            }
+
+            if ($ignored) {
+                $this->log(sprintf(
+                    'Ignored %s-mode webhook event(s) because the gateway is in %s mode: %s',
+                    $live_mode ? 'test' : 'live',
+                    $live_mode ? 'live' : 'test',
+                    $this->describe_events($ignored)
+                ));
+            }
+
+            if (!$kept) {
+                return wp_send_json_success();
+            }
+
+            $events->events = $kept;
+        }
+
         foreach ($events as $event) {
             do_action('woocommerce_fastspring_handle_webhook_request', $event);
         }
@@ -701,7 +733,7 @@ class WC_Gateway_FastSpring_Handler
     /**
      * Handles the order.completed webhook
      *
-     * @param array $payload Webhook data
+     * @param object $payload Webhook event
      */
     public function handle_webhook_request_order_completed($payload)
     {
@@ -915,9 +947,20 @@ class WC_Gateway_FastSpring_Handler
      */
     private function describe_webhook_events($raw_body)
     {
-        $body   = json_decode($raw_body);
-        $events = is_object($body) && isset($body->events) && is_array($body->events) ? $body->events : array();
-        $parts  = array();
+        $body = json_decode($raw_body);
+
+        return $this->describe_events(is_object($body) && isset($body->events) && is_array($body->events) ? $body->events : array());
+    }
+
+    /**
+     * Summarize webhook events for the log (VAL-924)
+     *
+     * @param array $events Decoded webhook events
+     * @return string For example "order.completed EVWB5SXET64NFJD6RPVLQYZ4ZSNSZE"
+     */
+    private function describe_events(array $events)
+    {
+        $parts = array();
 
         foreach (array_slice($events, 0, 3) as $event) {
             $type    = isset($event->type) && is_scalar($event->type) ? (string) $event->type : '?';
