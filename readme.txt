@@ -156,3 +156,9 @@ N/A
 = 2.6.1 =
 * Strip the `id` attribute WordPress 6.3+ auto-injects on the FastSpring Builder script tag so our `id="fsc-api"` replacement isn't a duplicate. Browsers keep only the first `id`, which was breaking `document.getElementById('fsc-api')` inside FS Builder and preventing the checkout popup from opening (VAL-882).
 * Clear `_fs_checkout_started_at` when a temp order converts to a real order so the VAL-879 cron-exemption marker no longer lingers on finalized orders (VAL-882).
+
+= 2.7.0 =
+* Confirm every payment with the FastSpring Orders API before an order is marked paid, on both the webhook and the popup-close path. The FastSpring order must be completed, match the gateway's live or test mode, be tagged with the Woo order, and match its currency and amount. A transient failure answers 503 so FastSpring retries; a definitive mismatch leaves the order unpaid, with an order note and an admin email (VAL-924).
+* Verify the `X-FS-Signature` HMAC on every webhook with `hash_equals()`, and add a Webhook Signature Check setting. Report only (the default) logs unsigned or invalid webhooks and still processes them; Enforce rejects them with HTTP 401 so FastSpring retries. Results are counted under the setting (VAL-924).
+* Ignore webhook events from the other mode (test events on a live site, live events on a test-mode site) before any handler runs (VAL-924).
+* Honor the Logging setting, which was never read, and always log warnings and errors (VAL-924).
