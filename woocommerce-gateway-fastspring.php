@@ -4,7 +4,7 @@
  * Description: Plugin Taken over by Built Mighty because plugin is no longer maintained: https://github.com/cyberwombat/woocommerce-fastspring-payment-gateway/blob/master/README.md - Accept credit card, PayPal, Amazon Pay and other payments on your store using FastSpring.
  * Author: Enradia
  * Author URI: https://enradia.com/
- * Version: 2.6.1
+ * Version: 2.7.0
  * Requires at least: 4.4
  * Tested up to: 6.9
  * WC requires at least: 3.0
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 /**
  * Required minimums and constants
  */
-define('WC_FASTSPRING_VERSION', '2.6.1');
+define('WC_FASTSPRING_VERSION', '2.7.0');
 define('WC_FASTSPRING_SCRIPT', 'https://d1f8f9xcsvx3ha.cloudfront.net/sbl/0.8.3/fastspring-builder.min.js');
 define('WC_FASTSPRING_MIN_PHP_VER', '5.6.0');
 define('WC_FASTSPRING_MIN_WC_VER', '3.0.0');
@@ -376,21 +376,23 @@ if (!class_exists('WC_FastSpring')):
        * And fits on your back?
        * It's log, log, log
        */
-      public static function log($message)
+      public static function log($message, $level = 'notice')
       {
-
-          // Static function so we need to get options another way
-          $settings = self::get_setting('woocommerce_fastspring_settings');
+          // VAL-924: this used to look up a setting that doesn't exist, so the Logging
+          // checkbox never took effect. Warnings and errors are always recorded so
+          // rejected webhooks and failed payment checks are logged even with it off.
+          $always = in_array($level, array('emergency', 'alert', 'critical', 'error', 'warning'), true);
 
           if (
-            isset( $settings['logging'] ) ||
+            $always ||
+            self::get_setting('logging') ||
             defined('WP_DEBUG') &&
             WP_DEBUG
           ) {
               if (empty(self::$log)) {
                   self::$log = new WC_Logger();
               }
-              self::$log->add('woocommerce-gateway-fastspring', $message);
+              self::$log->add('woocommerce-gateway-fastspring', $message, $level);
           }
       }
 

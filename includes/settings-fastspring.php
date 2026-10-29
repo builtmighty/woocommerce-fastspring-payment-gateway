@@ -3,6 +3,35 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// VAL-924: show how incoming webhooks have been signed, to decide when it's safe to switch to Enforce.
+$signature_tally_description = '';
+if (is_admin() && !wp_doing_ajax()) {
+    $tally = get_option('wc_fastspring_webhook_signature_tally', array());
+
+    if (is_array($tally) && !empty($tally['since'])) {
+        $signature_tally_description = '<br><strong>' . sprintf(
+            __('Webhooks received since %1$s UTC: %2$s with a valid signature, %3$s unsigned, %4$s with an invalid signature.', 'woocommerce-gateway-fastspring'),
+            esc_html($tally['since']),
+            number_format_i18n(isset($tally['valid']) ? $tally['valid'] : 0),
+            number_format_i18n(isset($tally['missing']) ? $tally['missing'] : 0),
+            number_format_i18n(isset($tally['invalid']) ? $tally['invalid'] : 0)
+        ) . '</strong>';
+
+        $last_seen = array(
+            'missing'   => __('Last unsigned webhook: %s UTC.', 'woocommerce-gateway-fastspring'),
+            'invalid'   => __('Last webhook with an invalid signature: %s UTC.', 'woocommerce-gateway-fastspring'),
+            'no_secret' => __('Last webhook received while the Webhook Secret was empty: %s UTC.', 'woocommerce-gateway-fastspring'),
+        );
+        foreach ($last_seen as $status => $sentence) {
+            if (!empty($tally['last_' . $status])) {
+                $signature_tally_description .= '<br>' . sprintf($sentence, esc_html($tally['last_' . $status]));
+            }
+        }
+    } else {
+        $signature_tally_description = '<br>' . __('No webhooks have been checked yet.', 'woocommerce-gateway-fastspring');
+    }
+}
+
 return apply_filters(
     'woocommerce-gateway-fastspring_settings',
 
@@ -102,9 +131,20 @@ return apply_filters(
     'webhook_secret' => array(
       'title' => __('Webhook Secret', 'woocommerce-gateway-fastspring'),
       'type' => 'text',
-      'description' => __('A webhook secret is a random sequence of characters used to authenticate webhook calls.<br>The defaults were automatically generated for you as a convenience.', 'woocommerce-gateway-fastspring'),
+      'description' => __('A webhook secret is a random sequence of characters used to authenticate webhook calls.<br>It must exactly match the <i>HMAC SHA256 Secret</i> on this site\'s webhook in the FastSpring dashboard (<i>Developer Tools > Webhooks > Configuration</i>). If you change it, change it in both places at the same time.', 'woocommerce-gateway-fastspring'),
       'desc_tip' => false,
       'default' => substr(str_shuffle(MD5(microtime())), 0, 30),
+    ),
+    'webhook_signature_mode' => array(
+      'title' => __('Webhook Signature Check', 'woocommerce-gateway-fastspring'),
+      'type' => 'select',
+      'description' => __('Start with <i>Report only</i>. Once every webhook arrives with a valid signature, switch to <i>Enforce</i>. If FastSpring ever changes how it signs webhooks, switching back to <i>Report only</i> restores processing immediately. Rejected webhooks are retried by FastSpring for up to 7 days. Every payment is confirmed with the FastSpring API before an order is marked paid, in both modes.', 'woocommerce-gateway-fastspring') . $signature_tally_description,
+      'default' => 'report',
+      'desc_tip' => false,
+      'options' => array(
+        'report' => __('Report only: log unsigned or invalid webhooks, but still process them', 'woocommerce-gateway-fastspring'),
+        'enforce' => __('Enforce: reject unsigned or invalid webhooks', 'woocommerce-gateway-fastspring'),
+      ),
     ),
     'api_username' => array(
       'title' => __('API Username', 'woocommerce-gateway-fastspring'),
